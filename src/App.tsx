@@ -12,10 +12,10 @@ import { Login } from './pages/Login';
 import { useState } from 'react';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(true); // Default to true for demo
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Default to true for demo
 
   if (!isAuthenticated) {
-    return <Login onLogin={() => setIsAuthenticated(true)} />;
+    return <Login onLogin={() => setIsAuthenticated(false)} />;
   }
 
   return (
