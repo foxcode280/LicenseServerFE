@@ -1,5 +1,5 @@
 
-import { SubscriptionPlan, Subscription, Company, License, User, ActivityLog, ConfigSettings, DeviceType } from './types';
+import { SubscriptionPlan, Subscription, Company, License, User, ActivityLog, ConfigSettings, DeviceType, OfflineLicenseRecord, OfflineActivationRequest } from './types';
 
 export const MOCK_DEVICE_TYPES: DeviceType[] = [
   { id: 'dt-1', name: 'Windows', status: 'Active' },
@@ -208,6 +208,93 @@ export const MOCK_LICENSES: License[] = [
     expiryDate: '2024-12-01',
     activationsCount: 1,
     maxActivations: 1,
+  },
+];
+
+export const MOCK_OFFLINE_LICENSES: OfflineLicenseRecord[] = [
+  {
+    id: 'off-1',
+    companyId: 'comp-1',
+    subscriptionId: 'sub-1',
+    planId: 'plan-3',
+    productType: 'Digital Signage',
+    deviceTypeId: 'dt-1',
+    seats: 10,
+    status: 'Awaiting Fingerprint',
+    genericLicenseFileName: 'TechCorp_M-0003_generic.lic',
+    notes: 'Generic offline license has been emailed to customer.',
+    createdAt: '2026-03-12',
+    approvedAt: '2026-03-12',
+    issuedAt: '2026-03-12',
+  },
+  {
+    id: 'off-2',
+    companyId: 'comp-2',
+    subscriptionId: 'sub-2',
+    planId: 'plan-2',
+    productType: 'Digital Signage',
+    deviceTypeId: 'dt-1',
+    seats: 5,
+    status: 'Fingerprint Uploaded',
+    genericLicenseFileName: 'GlobalFinance_M-0002_generic.lic',
+    requestFileName: 'GlobalFinance_branch-01.req',
+    fingerprintHash: 'FP-9A21F8D0B144',
+    notes: 'Awaiting admin bind-and-activate action.',
+    createdAt: '2026-03-10',
+    approvedAt: '2026-03-10',
+    issuedAt: '2026-03-10',
+  },
+  {
+    id: 'off-3',
+    companyId: 'comp-1',
+    subscriptionId: 'sub-1',
+    planId: 'plan-4',
+    productType: 'Digital Signage',
+    deviceTypeId: 'dt-2',
+    seats: 25,
+    status: 'Activated',
+    genericLicenseFileName: 'TechCorp_M-0004_generic.lic',
+    finalLicenseFileName: 'TechCorp_signage-linux_final.lic',
+    requestFileName: 'TechCorp_signage-linux.req',
+    fingerprintHash: 'FP-44C19A81E210',
+    notes: 'Activated and delivered to customer on 2026-03-08.',
+    createdAt: '2026-03-06',
+    approvedAt: '2026-03-06',
+    issuedAt: '2026-03-06',
+    activatedAt: '2026-03-08',
+  },
+];
+
+export const MOCK_OFFLINE_REQUESTS: OfflineActivationRequest[] = [
+  {
+    id: 'off-req-1',
+    offlineLicenseId: 'off-2',
+    requestFileName: 'GlobalFinance_branch-01.req',
+    fingerprintHash: 'FP-9A21F8D0B144',
+    fingerprint: {
+      machineName: 'GF-BRANCH-01',
+      macAddress: '00:1A:2B:3C:4D:5E',
+      ipAddress: '10.0.1.24',
+      hostName: 'branch-kiosk-01',
+      osHash: 'OS-89A7220F',
+    },
+    uploadedAt: '2026-03-14',
+    status: 'Uploaded',
+  },
+  {
+    id: 'off-req-2',
+    offlineLicenseId: 'off-3',
+    requestFileName: 'TechCorp_signage-linux.req',
+    fingerprintHash: 'FP-44C19A81E210',
+    fingerprint: {
+      machineName: 'TC-LNX-SIGNAGE-02',
+      macAddress: '00:AA:4C:00:22:31',
+      ipAddress: '172.16.0.44',
+      hostName: 'signage-node-02',
+      osHash: 'OS-2D8831AF',
+    },
+    uploadedAt: '2026-03-08',
+    status: 'Processed',
   },
 ];
 

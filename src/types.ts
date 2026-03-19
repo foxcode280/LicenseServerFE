@@ -6,6 +6,15 @@ export type CompanyStatus = 'Active' | 'Disabled' | 'Deleted' | 'Suspended';
 export type DeviceTypeStatus = 'Active' | 'Inactive';
 export type PlanStatus = 'Active' | 'Inactive' | 'Deleted';
 export type ProductType = 'Digital Signage' | 'Endpoint Management System';
+export type OfflineLicenseStatus =
+  | 'Pending Approval'
+  | 'Approved'
+  | 'Issued'
+  | 'Awaiting Fingerprint'
+  | 'Fingerprint Uploaded'
+  | 'Activated'
+  | 'Revoked';
+export type OfflineRequestStatus = 'Pending Upload' | 'Uploaded' | 'Processed';
 
 export interface DeviceType {
   id: string;
@@ -74,6 +83,44 @@ export interface License {
   expiryDate: string;
   activationsCount: number;
   maxActivations: number;
+}
+
+export interface OfflineFingerprint {
+  machineName: string;
+  macAddress: string;
+  ipAddress: string;
+  hostName: string;
+  osHash: string;
+}
+
+export interface OfflineLicenseRecord {
+  id: string;
+  companyId: string;
+  subscriptionId: string;
+  planId: string;
+  productType: ProductType;
+  deviceTypeId: string;
+  seats: number;
+  status: OfflineLicenseStatus;
+  genericLicenseFileName?: string;
+  finalLicenseFileName?: string;
+  requestFileName?: string;
+  fingerprintHash?: string;
+  notes?: string;
+  createdAt: string;
+  approvedAt?: string;
+  issuedAt?: string;
+  activatedAt?: string;
+}
+
+export interface OfflineActivationRequest {
+  id: string;
+  offlineLicenseId: string;
+  requestFileName: string;
+  fingerprintHash: string;
+  fingerprint: OfflineFingerprint;
+  uploadedAt: string;
+  status: OfflineRequestStatus;
 }
 
 export interface User {

@@ -36,7 +36,11 @@ import {
   ShieldAlert,
   Phone,
   UserCircle,
-  ExternalLink
+  ExternalLink,
+  Upload,
+  FileKey,
+  FileCheck,
+  HardDriveUpload
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -63,7 +67,9 @@ import {
   MOCK_USERS, 
   MOCK_ACTIVITY, 
   DEFAULT_CONFIG,
-  MOCK_DEVICE_TYPES
+  MOCK_DEVICE_TYPES,
+  MOCK_OFFLINE_LICENSES,
+  MOCK_OFFLINE_REQUESTS
 } from './constants';
 import { 
   SubscriptionPlan, 
@@ -80,8 +86,18 @@ import {
   DeviceTypeStatus,
   DeviceAllocation,
   ProductType,
-  PlanStatus
+  PlanStatus,
+  OfflineLicenseRecord,
+  OfflineActivationRequest,
+  OfflineFingerprint
 } from './types';
+import {
+  approveOfflineLicense,
+  issueGenericOfflineLicense,
+  uploadOfflineFingerprintRequest,
+  bindAndActivateOfflineLicense,
+  buildOfflineArtifactPreview
+} from './services/offlineLicenseService';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -150,6 +166,27 @@ const StatusBadge = ({ status }: { status: SubscriptionStatus | LicenseStatus | 
   );
 };
 
+const OfflineStatusBadge = ({ status }: { status: string }) => {
+  const styles: Record<string, string> = {
+    'Pending Approval': "bg-amber-100 text-amber-700 border-amber-200",
+    Approved: "bg-sky-100 text-sky-700 border-sky-200",
+    Issued: "bg-indigo-100 text-indigo-700 border-indigo-200",
+    'Awaiting Fingerprint': "bg-violet-100 text-violet-700 border-violet-200",
+    'Fingerprint Uploaded': "bg-blue-100 text-blue-700 border-blue-200",
+    Activated: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    Revoked: "bg-rose-100 text-rose-700 border-rose-200",
+    Uploaded: "bg-blue-100 text-blue-700 border-blue-200",
+    Processed: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    'Pending Upload': "bg-amber-100 text-amber-700 border-amber-200",
+  };
+
+  return (
+    <span className={cn("px-2.5 py-0.5 rounded-full text-xs font-medium border", styles[status] || "bg-slate-100 text-slate-700 border-slate-200")}>
+      {status}
+    </span>
+  );
+};
+
 const Card = ({ children, className, title, subtitle, action }: { children: React.ReactNode, className?: string, title?: string, subtitle?: string, action?: React.ReactNode, key?: string | number }) => (
   <div className={cn("bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden", className)}>
     {(title || action) && (
@@ -198,6 +235,8 @@ export default function App() {
   const [companies, setCompanies] = useState<Company[]>(MOCK_COMPANIES);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>(MOCK_SUBSCRIPTIONS);
   const [licenses, setLicenses] = useState<License[]>(MOCK_LICENSES);
+  const [offlineLicenses, setOfflineLicenses] = useState<OfflineLicenseRecord[]>(MOCK_OFFLINE_LICENSES);
+  const [offlineRequests, setOfflineRequests] = useState<OfflineActivationRequest[]>(MOCK_OFFLINE_REQUESTS);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>(MOCK_DEVICE_TYPES);
   const [activity, setActivity] = useState<ActivityLog[]>(MOCK_ACTIVITY);
   const [config, setConfig] = useState<ConfigSettings>(DEFAULT_CONFIG);
@@ -207,6 +246,7 @@ export default function App() {
   const [newSubAllocations, setNewSubAllocations] = useState<DeviceAllocation[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>('');
   const [subscriptionTab, setSubscriptionTab] = useState<'plans' | 'manage'>('manage');
+  const [licenseTab, setLicenseTab] = useState<'inventory' | 'offline'>('inventory');
 
   useEffect(() => {
     if (showCreateSub) {
@@ -230,6 +270,10 @@ export default function App() {
   const [showUserModal, setShowUserModal] = useState(false);
   const [showDeviceTypeModal, setShowDeviceTypeModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showOfflineLicenseModal, setShowOfflineLicenseModal] = useState(false);
+  const [showOfflineRequestModal, setShowOfflineRequestModal] = useState(false);
+  const [selectedOfflineLicenseId, setSelectedOfflineLicenseId] = useState<string | null>(null);
+  const [selectedOfflineArtifact, setSelectedOfflineArtifact] = useState<{ title: string; content: string } | null>(null);
   const [editingDeviceType, setEditingDeviceType] = useState<DeviceType | null>(null);
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -514,6 +558,106 @@ export default function App() {
       setShowPlanModal(false);
       setEditingPlan(null);
     }, 1000);
+  };
+
+  const handleCreateOfflineLicense = (e: React.FormEvent) => {
+    e.preventDefault();
+    const formData = new FormData(e.target as HTMLFormElement);
+    const subscriptionId = formData.get('subscriptionId') as string;
+    const subscription = subscriptions.find(item => item.id === subscriptionId);
+    const plan = plans.find(item => item.id === subscription?.planId);
+    if (!subscription || !plan) return;
+
+    const newRecord: OfflineLicenseRecord = {
+      id: `off-${Date.now()}`,
+      companyId: subscription.companyId,
+      subscriptionId,
+      planId: subscription.planId,
+      productType: plan.productType,
+      deviceTypeId: formData.get('deviceTypeId') as string,
+      seats: Number(formData.get('seats') || 1),
+      status: 'Pending Approval',
+      notes: (formData.get('notes') as string)?.trim() || 'Awaiting subscription approval.',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+
+    setIsProcessing(true);
+    setTimeout(() => {
+      setOfflineLicenses(prev => [newRecord, ...prev]);
+      setIsProcessing(false);
+      setShowOfflineLicenseModal(false);
+    }, 700);
+  };
+
+  const handleApproveOffline = async (licenseId: string) => {
+    const record = offlineLicenses.find(item => item.id === licenseId);
+    if (!record) return;
+    setIsProcessing(true);
+    const updated = await approveOfflineLicense(record);
+    setOfflineLicenses(prev => prev.map(item => item.id === licenseId ? updated : item));
+    setIsProcessing(false);
+  };
+
+  const handleIssueOffline = async (licenseId: string) => {
+    const record = offlineLicenses.find(item => item.id === licenseId);
+    if (!record) return;
+    setIsProcessing(true);
+    const updated = await issueGenericOfflineLicense(record);
+    setOfflineLicenses(prev => prev.map(item => item.id === licenseId ? updated : item));
+    setIsProcessing(false);
+  };
+
+  const handleUploadOfflineRequest = (licenseId: string) => {
+    setSelectedOfflineLicenseId(licenseId);
+    setShowOfflineRequestModal(true);
+  };
+
+  const handleSaveOfflineRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedOfflineLicenseId) return;
+    const record = offlineLicenses.find(item => item.id === selectedOfflineLicenseId);
+    if (!record) return;
+
+    const formData = new FormData(e.target as HTMLFormElement);
+    const fingerprint: OfflineFingerprint = {
+      machineName: formData.get('machineName') as string,
+      macAddress: formData.get('macAddress') as string,
+      ipAddress: formData.get('ipAddress') as string,
+      hostName: formData.get('hostName') as string,
+      osHash: formData.get('osHash') as string,
+    };
+
+    setIsProcessing(true);
+    const result = await uploadOfflineFingerprintRequest(record, fingerprint);
+    setOfflineLicenses(prev => prev.map(item => item.id === record.id ? result.license : item));
+    setOfflineRequests(prev => [result.request, ...prev.filter(item => item.offlineLicenseId !== record.id)]);
+    setIsProcessing(false);
+    setShowOfflineRequestModal(false);
+    setSelectedOfflineLicenseId(null);
+  };
+
+  const handleActivateOffline = async (licenseId: string) => {
+    const record = offlineLicenses.find(item => item.id === licenseId);
+    const request = offlineRequests.find(item => item.offlineLicenseId === licenseId && item.status === 'Uploaded');
+    if (!record || !request) return;
+    setIsProcessing(true);
+    const result = await bindAndActivateOfflineLicense(record, request);
+    setOfflineLicenses(prev => prev.map(item => item.id === licenseId ? result.license : item));
+    setOfflineRequests(prev => prev.map(item => item.id === request.id ? result.request : item));
+    setIsProcessing(false);
+  };
+
+  const openOfflineArtifact = (kind: 'generic-license' | 'request' | 'final-license', license: OfflineLicenseRecord) => {
+    const request = offlineRequests.find(item => item.offlineLicenseId === license.id);
+    setSelectedOfflineArtifact({
+      title:
+        kind === 'generic-license'
+          ? 'Generic Offline License Preview'
+          : kind === 'request'
+            ? 'Fingerprint Request Preview'
+            : 'Final Activated License Preview',
+      content: buildOfflineArtifactPreview(kind, license, request),
+    });
   };
 
   const handleDeleteUser = () => {
@@ -929,140 +1073,363 @@ export default function App() {
 
   const LicensesView = () => (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2" title="License Inventory" subtitle="Active and historical license keys" action={<button className="text-slate-500 hover:text-slate-900"><Download size={18} /></button>}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-slate-100">
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">License Key</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Company</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Device Type</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Activations</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Expiry</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {licenses.map((lic) => (
-                  <tr key={lic.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-4">
-                      <code className="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-700">{lic.key}</code>
-                    </td>
-                    <td className="px-4 py-4 text-sm font-bold text-slate-900">
-                      {companies.find(c => c.id === lic.companyId)?.name}
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">
-                        {deviceTypes.find(dt => dt.id === lic.deviceTypeId)?.name || 'Unknown'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex flex-col gap-1">
-                        <StatusBadge status={lic.status} />
-                        {lic.statusDescription && (
-                          <p className="text-[10px] text-slate-400 italic max-w-[100px] truncate" title={lic.statusDescription}>
-                            {lic.statusDescription}
-                          </p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="w-full max-w-[100px] bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className="bg-emerald-500 h-full" 
-                          style={{ width: `${(lic.activationsCount / lic.maxActivations) * 100}%` }} 
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-1">{lic.activationsCount} / {lic.maxActivations}</p>
-                    </td>
-                    <td className="px-4 py-4 text-xs text-slate-600">{lic.expiryDate}</td>
-                    <td className="px-4 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Download License"><Download size={16} /></button>
-                        <button className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Revoke License"><XCircle size={16} /></button>
-                        <button className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title="Settings"><Settings size={16} /></button>
-                      </div>
-                    </td>
+      <div className="flex items-center gap-4 border-b border-slate-200">
+        <button
+          onClick={() => setLicenseTab('inventory')}
+          className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-colors", licenseTab === 'inventory' ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500 hover:text-slate-700")}
+        >
+          License Inventory
+        </button>
+        <button
+          onClick={() => setLicenseTab('offline')}
+          className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-colors", licenseTab === 'offline' ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500 hover:text-slate-700")}
+        >
+          Offline License Management
+        </button>
+      </div>
+
+      {licenseTab === 'inventory' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-2" title="License Inventory" subtitle="Active and historical license keys" action={<button className="text-slate-500 hover:text-slate-900"><Download size={18} /></button>}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">License Key</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Company</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Device Type</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Activations</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Expiry</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-
-        <Card title="Generate License" subtitle="Issue new license for approved subs">
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase">Select Subscription</label>
-              <select 
-                value={selectedSubId}
-                onChange={(e) => {
-                  setSelectedSubId(e.target.value);
-                  setSelectedDeviceTypeId('');
-                }}
-                className="w-full mt-1.5 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-              >
-                <option value="">Choose an approved subscription...</option>
-                {subscriptions.filter(s => s.status === 'Active').map(s => (
-                  <option key={s.id} value={s.id}>
-                    {companies.find(c => c.id === s.companyId)?.name} - {plans.find(p => p.id === s.planId)?.name}
-                  </option>
-                ))}
-              </select>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {licenses.map((lic) => (
+                    <tr key={lic.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-4">
+                        <code className="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-700">{lic.key}</code>
+                      </td>
+                      <td className="px-4 py-4 text-sm font-bold text-slate-900">
+                        {companies.find(c => c.id === lic.companyId)?.name}
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">
+                          {deviceTypes.find(dt => dt.id === lic.deviceTypeId)?.name || 'Unknown'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-col gap-1">
+                          <StatusBadge status={lic.status} />
+                          {lic.statusDescription && (
+                            <p className="text-[10px] text-slate-400 italic max-w-[100px] truncate" title={lic.statusDescription}>
+                              {lic.statusDescription}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="w-full max-w-[100px] bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className="bg-emerald-500 h-full"
+                            style={{ width: `${(lic.activationsCount / lic.maxActivations) * 100}%` }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">{lic.activationsCount} / {lic.maxActivations}</p>
+                      </td>
+                      <td className="px-4 py-4 text-xs text-slate-600">{lic.expiryDate}</td>
+                      <td className="px-4 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Download License"><Download size={16} /></button>
+                          <button className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Revoke License"><XCircle size={16} /></button>
+                          <button className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title="Settings"><Settings size={16} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+          </Card>
 
-            {selectedSubId && (
+          <Card title="Generate License" subtitle="Issue new license for approved subs">
+            <div className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase">Select Device Type</label>
-                <select 
-                  value={selectedDeviceTypeId}
-                  onChange={(e) => setSelectedDeviceTypeId(e.target.value)}
+                <label className="text-xs font-bold text-slate-500 uppercase">Select Subscription</label>
+                <select
+                  value={selectedSubId}
+                  onChange={(e) => {
+                    setSelectedSubId(e.target.value);
+                    setSelectedDeviceTypeId('');
+                  }}
                   className="w-full mt-1.5 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 >
-                  <option value="">Choose device type...</option>
-                  {subscriptions.find(s => s.id === selectedSubId)?.allocations?.map(alloc => {
-                    const dt = deviceTypes.find(d => d.id === alloc.deviceTypeId);
-                    if (!dt || dt.status === 'Inactive') return null;
-                    
-                    const usedCount = licenses.filter(l => 
-                      l.subscriptionId === selectedSubId && 
-                      l.deviceTypeId === dt.id && 
-                      l.status === 'Active'
-                    ).length;
-
-                    return (
-                      <option key={dt.id} value={dt.id} disabled={usedCount >= alloc.count}>
-                        {dt.name} ({usedCount}/{alloc.count} used)
-                      </option>
-                    );
-                  })}
+                  <option value="">Choose an approved subscription...</option>
+                  {subscriptions.filter(s => s.status === 'Active').map(s => (
+                    <option key={s.id} value={s.id}>
+                      {companies.find(c => c.id === s.companyId)?.name} - {plans.find(p => p.id === s.planId)?.name}
+                    </option>
+                  ))}
                 </select>
               </div>
-            )}
 
-            <div className="pt-4">
-              <button 
-                onClick={handleGenerateKey}
-                disabled={isProcessing || !selectedSubId || !selectedDeviceTypeId}
-                className="w-full py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isProcessing ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Key size={18} />}
-                {isProcessing ? 'Generating...' : 'Generate License Key'}
-              </button>
-            </div>
-            <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl">
-              <div className="flex gap-2">
-                <AlertTriangle size={16} className="text-amber-600 shrink-0" />
-                <p className="text-[10px] text-amber-700 leading-relaxed">
-                  Generating a license will automatically bind it to the selected subscription and device type. Each license corresponds to one device allocation.
-                </p>
+              {selectedSubId && (
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Select Device Type</label>
+                  <select
+                    value={selectedDeviceTypeId}
+                    onChange={(e) => setSelectedDeviceTypeId(e.target.value)}
+                    className="w-full mt-1.5 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  >
+                    <option value="">Choose device type...</option>
+                    {subscriptions.find(s => s.id === selectedSubId)?.allocations?.map(alloc => {
+                      const dt = deviceTypes.find(d => d.id === alloc.deviceTypeId);
+                      if (!dt || dt.status === 'Inactive') return null;
+
+                      const usedCount = licenses.filter(l =>
+                        l.subscriptionId === selectedSubId &&
+                        l.deviceTypeId === dt.id &&
+                        l.status === 'Active'
+                      ).length;
+
+                      return (
+                        <option key={dt.id} value={dt.id} disabled={usedCount >= alloc.count}>
+                          {dt.name} ({usedCount}/{alloc.count} used)
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
+              <div className="pt-4">
+                <button
+                  onClick={handleGenerateKey}
+                  disabled={isProcessing || !selectedSubId || !selectedDeviceTypeId}
+                  className="w-full py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isProcessing ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Key size={18} />}
+                  {isProcessing ? 'Generating...' : 'Generate License Key'}
+                </button>
+              </div>
+              <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl">
+                <div className="flex gap-2">
+                  <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+                  <p className="text-[10px] text-amber-700 leading-relaxed">
+                    Generating a license will automatically bind it to the selected subscription and device type. Each license corresponds to one device allocation.
+                  </p>
+                </div>
               </div>
             </div>
+          </Card>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="p-0">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase">Pending Approval</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">{offlineLicenses.filter(item => item.status === 'Pending Approval').length}</p>
+                </div>
+                <Mail className="text-amber-500" size={22} />
+              </div>
+            </Card>
+            <Card className="p-0">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase">Awaiting Fingerprint</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">{offlineLicenses.filter(item => item.status === 'Awaiting Fingerprint').length}</p>
+                </div>
+                <FileKey className="text-indigo-500" size={22} />
+              </div>
+            </Card>
+            <Card className="p-0">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase">Uploaded Requests</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">{offlineRequests.filter(item => item.status === 'Uploaded').length}</p>
+                </div>
+                <HardDriveUpload className="text-blue-500" size={22} />
+              </div>
+            </Card>
+            <Card className="p-0">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase">Activated</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">{offlineLicenses.filter(item => item.status === 'Activated').length}</p>
+                </div>
+                <FileCheck className="text-emerald-500" size={22} />
+              </div>
+            </Card>
           </div>
-        </Card>
-      </div>
+
+          <Card
+            title="Offline Lifecycle Overview"
+            subtitle="Issue generic files, collect .req uploads, and generate final activated licenses"
+            action={
+              <button
+                onClick={() => setShowOfflineLicenseModal(true)}
+                className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-600 transition-colors"
+              >
+                <Plus size={16} /> New Offline License
+              </button>
+            }
+          >
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-2">1. Approval</p>
+                <p className="text-sm text-slate-600">Admin creates an offline entitlement and approves it before any file is issued.</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-2">2. Generic .lic</p>
+                <p className="text-sm text-slate-600">Server generates a generic license file for transfer to the offline machine.</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-2">3. Fingerprint .req</p>
+                <p className="text-sm text-slate-600">Customer uploads the machine request file generated from the offline endpoint.</p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-2">4. Final .lic</p>
+                <p className="text-sm text-slate-600">Server binds the entitlement to the fingerprint and produces the final activated license.</p>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="Issued / Pending Offline Licenses" subtitle="Manage approval and generic .lic generation">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Company</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Plan</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Product</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Seats</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Artifacts</th>
+                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {offlineLicenses.map((record) => {
+                    const company = companies.find(item => item.id === record.companyId);
+                    const plan = plans.find(item => item.id === record.planId);
+                    return (
+                      <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-4 py-4">
+                          <p className="text-sm font-bold text-slate-900">{company?.name}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">{record.id}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="text-sm text-slate-700 font-medium">{plan?.name}</p>
+                          <p className="text-[10px] text-slate-400">{record.createdAt}</p>
+                        </td>
+                        <td className="px-4 py-4 text-xs text-slate-600">{record.productType}</td>
+                        <td className="px-4 py-4 text-xs font-bold text-slate-700">{record.seats}</td>
+                        <td className="px-4 py-4"><OfflineStatusBadge status={record.status} /></td>
+                        <td className="px-4 py-4">
+                          <div className="space-y-1">
+                            {record.genericLicenseFileName && <p className="text-[10px] text-slate-500">{record.genericLicenseFileName}</p>}
+                            {record.requestFileName && <p className="text-[10px] text-slate-500">{record.requestFileName}</p>}
+                            {record.finalLicenseFileName && <p className="text-[10px] text-slate-500">{record.finalLicenseFileName}</p>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center justify-end gap-2">
+                            {record.status === 'Pending Approval' && (
+                              <button onClick={() => handleApproveOffline(record.id)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Approve Offline License"><CheckCircle2 size={18} /></button>
+                            )}
+                            {(record.status === 'Approved' || record.status === 'Issued') && (
+                              <button onClick={() => handleIssueOffline(record.id)} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Generate Generic .lic"><FileKey size={18} /></button>
+                            )}
+                            {record.genericLicenseFileName && (
+                              <button onClick={() => openOfflineArtifact('generic-license', record)} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Preview Generic License"><ExternalLink size={18} /></button>
+                            )}
+                            {record.status === 'Awaiting Fingerprint' && (
+                              <button onClick={() => handleUploadOfflineRequest(record.id)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Upload Fingerprint .req"><Upload size={18} /></button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <Card title="Activation Requests" subtitle="Bind incoming .req files to issued licenses">
+              <div className="space-y-4">
+                {offlineRequests.map((request) => {
+                  const record = offlineLicenses.find(item => item.id === request.offlineLicenseId);
+                  const company = companies.find(item => item.id === record?.companyId);
+                  return (
+                    <div key={request.id} className="p-4 border border-slate-100 rounded-2xl bg-slate-50/50 space-y-3">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-slate-900">{company?.name}</p>
+                          <p className="text-xs text-slate-500">{request.requestFileName}</p>
+                        </div>
+                        <OfflineStatusBadge status={request.status} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
+                        <p>Machine: <span className="font-bold text-slate-900">{request.fingerprint.machineName}</span></p>
+                        <p>Hash: <span className="font-mono text-slate-900">{request.fingerprintHash}</span></p>
+                        <p>Host: <span className="font-bold text-slate-900">{request.fingerprint.hostName}</span></p>
+                        <p>OS Hash: <span className="font-mono text-slate-900">{request.fingerprint.osHash}</span></p>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <button onClick={() => record && openOfflineArtifact('request', record)} className="text-xs font-bold text-slate-600 hover:text-slate-900">Preview .req</button>
+                        {request.status === 'Uploaded' && record && (
+                          <button onClick={() => handleActivateOffline(record.id)} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold hover:bg-emerald-600 transition-colors">
+                            Bind & Activate
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {offlineRequests.length === 0 && (
+                  <p className="text-sm text-slate-400 italic py-6 text-center border border-dashed border-slate-200 rounded-2xl">No offline fingerprint requests uploaded yet.</p>
+                )}
+              </div>
+            </Card>
+
+            <Card title="Activated Offline Licenses" subtitle="Final .lic artifacts ready for manual transfer">
+              <div className="space-y-4">
+                {offlineLicenses.filter(item => item.status === 'Activated').map((record) => {
+                  const company = companies.find(item => item.id === record.companyId);
+                  return (
+                    <div key={record.id} className="p-4 border border-emerald-100 rounded-2xl bg-emerald-50/40 space-y-3">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-slate-900">{company?.name}</p>
+                          <p className="text-xs text-slate-500">{record.finalLicenseFileName}</p>
+                        </div>
+                        <OfflineStatusBadge status={record.status} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
+                        <p>Activated At: <span className="font-bold text-slate-900">{record.activatedAt}</span></p>
+                        <p>Fingerprint: <span className="font-mono text-slate-900">{record.fingerprintHash}</span></p>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] text-slate-500">{record.notes}</p>
+                        <button onClick={() => openOfflineArtifact('final-license', record)} className="px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors">
+                          Preview Final .lic
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {offlineLicenses.filter(item => item.status === 'Activated').length === 0 && (
+                  <p className="text-sm text-slate-400 italic py-6 text-center border border-dashed border-slate-200 rounded-2xl">No activated offline licenses available yet.</p>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -2110,6 +2477,180 @@ export default function App() {
                     {isProcessing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save size={18} />}
                     {isProcessing ? 'Saving...' : 'Save Changes'}
                   </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* Offline License Modal */}
+          {showOfflineLicenseModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => !isProcessing && setShowOfflineLicenseModal(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden"
+              >
+                <div className="p-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-bold text-slate-900">Create Offline License</h2>
+                    <button onClick={() => setShowOfflineLicenseModal(false)} className="text-slate-400 hover:text-slate-600"><XCircle size={24} /></button>
+                  </div>
+                  <form onSubmit={handleCreateOfflineLicense} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Active Subscription</label>
+                      <select
+                        name="subscriptionId"
+                        required
+                        className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                      >
+                        <option value="">Select subscription</option>
+                        {subscriptions.filter(item => item.status === 'Active').map(item => (
+                          <option key={item.id} value={item.id}>
+                            {companies.find(company => company.id === item.companyId)?.name} - {plans.find(plan => plan.id === item.planId)?.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Device Type</label>
+                        <select
+                          name="deviceTypeId"
+                          required
+                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        >
+                          <option value="">Select device type</option>
+                          {deviceTypes.filter(item => item.status === 'Active').map(item => (
+                            <option key={item.id} value={item.id}>{item.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Seats</label>
+                        <input
+                          name="seats"
+                          type="number"
+                          min="1"
+                          required
+                          defaultValue={1}
+                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-500 uppercase">Notes</label>
+                      <textarea
+                        name="notes"
+                        defaultValue="Offline entitlement created for manual transfer workflow."
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none min-h-[100px] resize-none"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isProcessing}
+                      className="w-full py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+                    >
+                      {isProcessing ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save size={18} />}
+                      {isProcessing ? 'Creating...' : 'Create Offline License'}
+                    </button>
+                  </form>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* Offline Request Modal */}
+          {showOfflineRequestModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => !isProcessing && setShowOfflineRequestModal(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl overflow-hidden"
+              >
+                <div className="p-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-bold text-slate-900">Upload Fingerprint Request</h2>
+                    <button onClick={() => setShowOfflineRequestModal(false)} className="text-slate-400 hover:text-slate-600"><XCircle size={24} /></button>
+                  </div>
+                  <form onSubmit={handleSaveOfflineRequest} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Machine Name</label>
+                        <input name="machineName" type="text" required placeholder="BRANCH-KIOSK-01" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Host Name</label>
+                        <input name="hostName" type="text" required placeholder="signage-host-01" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">MAC Address</label>
+                        <input name="macAddress" type="text" required placeholder="00:1A:2B:3C:4D:5E" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">IP Address</label>
+                        <input name="ipAddress" type="text" required placeholder="10.0.0.21" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 uppercase">OS Hash</label>
+                        <input name="osHash" type="text" required placeholder="OS-89A7220F" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isProcessing}
+                      className="w-full py-3 bg-blue-500 text-white rounded-xl font-bold hover:bg-blue-600 transition-colors shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
+                    >
+                      {isProcessing ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload size={18} />}
+                      {isProcessing ? 'Uploading...' : 'Upload .req Data'}
+                    </button>
+                  </form>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* Offline Artifact Preview */}
+          {selectedOfflineArtifact && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setSelectedOfflineArtifact(null)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden"
+              >
+                <div className="p-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-bold text-slate-900">{selectedOfflineArtifact.title}</h2>
+                    <button onClick={() => setSelectedOfflineArtifact(null)} className="text-slate-400 hover:text-slate-600"><XCircle size={24} /></button>
+                  </div>
+                  <div className="bg-slate-950 rounded-2xl p-6 overflow-x-auto">
+                    <pre className="text-xs text-emerald-200 whitespace-pre-wrap">{selectedOfflineArtifact.content}</pre>
+                  </div>
                 </div>
               </motion.div>
             </div>
