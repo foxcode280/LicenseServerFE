@@ -1,0 +1,5 @@
+{
+  "name": "LIC Manager",
+  "description": "Enterprise-grade License Management System with subscription approval, device fingerprinting, and activation tracking.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Subscription": {
+      "title": "Subscription",
+      "description": "A customer's subscription to a license plan.",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string", "description": "Name of the customer company" },
+        "planName": { "type": "string", "description": "Name of the selected plan" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected", "Expired"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string", "description": "UID of the company admin" }
+      },
+      "required": ["companyName", "planName", "status", "userId"]
+    },
+    "License": {
+      "title": "License",
+      "description": "A generated license key associated with a subscription.",
+      "type": "object",
+      "properties": {
+        "subscriptionId": { "type": "string" },
+        "key": { "type": "string" },
+        "maxActivations": { "type": "integer" },
+        "currentActivations": { "type": "integer" },
+        "issuedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subscriptionId", "key", "maxActivations"]
+    },
+    "Activation": {
+      "title": "Activation",
+      "description": "A record of a device activation.",
+      "type": "object",
+      "properties": {
+        "licenseId": { "type": "string" },
+        "fingerprint": {
+          "type": "object",
+          "properties": {
+            "cpuId": { "type": "string" },
+            "macAddress": { "type": "string" },
+            "ipAddress": { "type": "string" }
+          }
+        },
+        "activatedAt": { "type": "string", "format": "date-time" },
+        "token": { "type": "string" }
+      },
+      "required": ["licenseId", "fingerprint", "token"]
+    }
+  },
+  "firestore": {
+    "/subscriptions/{subId}": {
+      "schema": "Subscription",
+      "description": "Customer subscriptions"
+    },
+    "/licenses/{licId}": {
+      "schema": "License",
+      "description": "Generated license keys"
+    },
+    "/activations/{actId}": {
+      "schema": "Activation",
+      "description": "Device activation records"
+    }
+  }
+}
