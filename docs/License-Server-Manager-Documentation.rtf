@@ -1,0 +1,144 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Calibri;}{\f1 Calibri Light;}}
+\paperw11906\paperh16838\margl1440\margr1440\margt1440\margb1440
+\fs22
+\pard\sa200\sl276\slmult1\b\f1\fs34 License Server Manager Documentation\par
+\pard\sa160\sl276\slmult1\f0\fs22 This document describes the implemented licensing model, workflow, business rules, and status definitions for the License Server Manager frontend.\par
+\pard\sa200\b\fs28 1. Purpose\par
+\pard\sa120\b0 License Server Manager is designed to manage enterprise software licensing across subscription management, online licensing, offline licensing, machine activation, and administrative control.\par
+\pard\sa120 The implementation follows a three-layer enterprise licensing model:\par
+\pard\li360\sa80 1. Subscription lifecycle\par
+\pard\li360\sa80 2. License lifecycle\par
+\pard\li360\sa80 3. Activation lifecycle\par
+\pard\sa200\b\fs28 2. Design Principles\par
+\pard\li360\sa80\b0 - Entitlement and activation are separate concerns.\par
+\pard\li360\sa80 - Subscription approval controls license generation.\par
+\pard\li360\sa80 - Activation is tracked independently from issuance.\par
+\pard\li360\sa80 - Offline activation uses fingerprint-based machine binding.\par
+\pard\li360\sa80 - Revoked states override normal validity.\par
+\pard\li360\sa80 - Grace is policy-driven.\par
+\pard\li360\sa80 - Machine binding should be auditable.\par
+\pard\sa200\b\fs28 3. Subscription Lifecycle\par
+\pard\sa120\b0 Recommended status flow:\par
+\pard\li360\sa80 DRAFT -> PENDING_APPROVAL -> APPROVED -> ACTIVE -> SUSPENDED -> EXPIRED -> CANCELLED\par
+\pard\sa120\b DRAFT\par
+\pard\sa80\b0 Subscription created but not finalized. Editable. License generation is not allowed.\par
+\pard\sa120\b PENDING_APPROVAL\par
+\pard\sa80\b0 Awaiting administrative approval. Preview allowed. License generation disabled.\par
+\pard\sa120\b APPROVED\par
+\pard\sa80\b0 Business approval completed. Device allocation finalized. License generation allowed.\par
+\pard\sa120\b ACTIVE\par
+\pard\sa80\b0 Subscription currently valid. License generation and activation allowed according to policy.\par
+\pard\sa120\b SUSPENDED\par
+\pard\sa80\b0 Temporarily blocked by administrator. New issuance and activation should be blocked.\par
+\pard\sa120\b EXPIRED\par
+\pard\sa80\b0 Subscription duration completed. New license generation is blocked.\par
+\pard\sa120\b CANCELLED\par
+\pard\sa80\b0 Permanently closed. Terminal state.\par
+\pard\sa200\b\fs28 4. License Lifecycle\par
+\pard\sa120\b0 Recommended status flow:\par
+\pard\li360\sa80 DRAFT -> GENERATED -> ISSUED -> ACTIVATION_PENDING -> ACTIVE -> GRACE -> EXPIRED -> REVOKED\par
+\pard\sa120\b DRAFT\par
+\pard\sa80\b0 License preview stage only. Not committed as a production artifact.\par
+\pard\sa120\b GENERATED\par
+\pard\sa80\b0 License created in the system and stored in the database.\par
+\pard\sa120\b ISSUED\par
+\pard\sa80\b0 License delivered to customer by email, portal, or manual transfer.\par
+\pard\sa120\b ACTIVATION_PENDING\par
+\pard\sa80\b0 Waiting for machine binding or activation completion. Common in offline licensing.\par
+\pard\sa120\b ACTIVE\par
+\pard\sa80\b0 Successfully activated and enforceable.\par
+\pard\sa120\b GRACE\par
+\pard\sa80\b0 Temporary extension after expiry. Renewal may still be allowed during this window.\par
+\pard\sa120\b EXPIRED\par
+\pard\sa80\b0 License validity has ended. Activation and normal use should be blocked.\par
+\pard\sa120\b REVOKED\par
+\pard\sa80\b0 Manually disabled by administrator. Override state.\par
+\pard\sa200\b\fs28 5. Activation Lifecycle\par
+\pard\sa120\b0 Recommended status flow:\par
+\pard\li360\sa80 NOT_BOUND -> REQUEST_RECEIVED -> VERIFIED -> ACTIVATED -> MISMATCH -> BLOCKED\par
+\pard\sa120\b NOT_BOUND\par
+\pard\sa80\b0 Machine fingerprint not attached yet.\par
+\pard\sa120\b REQUEST_RECEIVED\par
+\pard\sa80\b0 Activation request received from machine or imported request file.\par
+\pard\sa120\b VERIFIED\par
+\pard\sa80\b0 Machine fingerprint validated successfully.\par
+\pard\sa120\b ACTIVATED\par
+\pard\sa80\b0 Binding completed successfully.\par
+\pard\sa120\b MISMATCH\par
+\pard\sa80\b0 Machine details do not match the expected fingerprint.\par
+\pard\sa120\b BLOCKED\par
+\pard\sa80\b0 Activation denied due to policy, mismatch, revocation, or administrator action.\par
+\pard\sa200\b\fs28 6. Enterprise Rules\par
+\pard\li360\sa80\b0 - License generation allowed only when subscription status is APPROVED or ACTIVE.\par
+\pard\li360\sa80 - Activation allowed only when subscription is ACTIVE.\par
+\pard\li360\sa80 - Offline license stays in ACTIVATION_PENDING until machine binding completes.\par
+\pard\li360\sa80 - Online license may move to ACTIVE immediately after API validation.\par
+\pard\li360\sa80 - Revoked licenses override normal active or grace behavior.\par
+\pard\li360\sa80 - Expired subscription blocks new license generation.\par
+\pard\li360\sa80 - Expired license blocks activation.\par
+\pard\sa200\b\fs28 7. Grace Handling\par
+\pard\sa120\b0 Standard rule:\par
+\pard\li360\sa80 ACTIVE -> GRACE -> EXPIRED\par
+\pard\sa120 Example:\par
+\pard\li360\sa80 License valid until 31 Dec.\par
+\pard\li360\sa80 Grace allowed for 7 days.\par
+\pard\li360\sa80 Final expiry becomes 7 Jan.\par
+\pard\sa120 During GRACE, renewal may still be allowed depending on policy.\par
+\pard\sa200\b\fs28 8. Revocation Rules\par
+\pard\li360\sa80\b0 ACTIVE -> REVOKED\par
+\pard\li360\sa80 GRACE -> REVOKED\par
+\pard\li360\sa80 ACTIVATION_PENDING -> REVOKED\par
+\pard\sa120 Revocation is an override rule and should take precedence over normal expiry flow.\par
+\pard\sa200\b\fs28 9. Online Workflow\par
+\pard\li360\sa80\b0 1. Create subscription\par
+\pard\li360\sa80 2. Submit for approval\par
+\pard\li360\sa80 3. Approve subscription\par
+\pard\li360\sa80 4. Move subscription to ACTIVE\par
+\pard\li360\sa80 5. Generate license\par
+\pard\li360\sa80 6. Move license to GENERATED\par
+\pard\li360\sa80 7. Issue license\par
+\pard\li360\sa80 8. Validate using online API\par
+\pard\li360\sa80 9. Set activation to ACTIVATED\par
+\pard\li360\sa80 10. Set license to ACTIVE\par
+\pard\sa200\b\fs28 10. Offline Workflow\par
+\pard\li360\sa80\b0 1. Create company context\par
+\pard\li360\sa80 2. Create subscription\par
+\pard\li360\sa80 3. Approve subscription\par
+\pard\li360\sa80 4. Finalize device allocation\par
+\pard\li360\sa80 5. Preview license payload\par
+\pard\li360\sa80 6. Generate license\par
+\pard\li360\sa80 7. Issue generic .lic\par
+\pard\li360\sa80 8. Move license to ACTIVATION_PENDING\par
+\pard\li360\sa80 9. Receive fingerprint request\par
+\pard\li360\sa80 10. Verify machine details\par
+\pard\li360\sa80 11. Activate final license\par
+\pard\li360\sa80 12. Set activation to ACTIVATED\par
+\pard\li360\sa80 13. Set license to ACTIVE\par
+\pard\sa200\b\fs28 11. Current Implementation Location\par
+\pard\li360\sa80\b0 Canonical lifecycle definitions: src\\licensingLifecycle.ts\par
+\pard\li360\sa80 Typed record integration: src\\types.ts\par
+\pard\li360\sa80 Mock seeded workflow records: src\\constants.ts\par
+\pard\li360\sa80 Offline lifecycle transitions: src\\services\\offlineLicenseService.ts\par
+\pard\sa200\b\fs28 12. Recommended Database Storage\par
+\pard\sa120\b0 Store these as database enums or constrained string columns:\par
+\pard\li360\sa80 - Subscription Status Enum\par
+\pard\li360\sa80 - License Status Enum\par
+\pard\li360\sa80 - Activation Status Enum\par
+\pard\sa120 Recommended persistence fields:\par
+\pard\li360\sa80 - subscriptions.workflow_status\par
+\pard\li360\sa80 - licenses.workflow_status\par
+\pard\li360\sa80 - licenses.activation_status\par
+\pard\li360\sa80 - offline_activation_requests.activation_status\par
+\pard\sa200\b\fs28 13. Help Notes For Operators\par
+\pard\li360\sa80\b0 While creating a subscription, ensure company, plan, and allocation are valid.\par
+\pard\li360\sa80 Use Custom only when a manually defined duration and start date are required.\par
+\pard\li360\sa80 During online generation, verify the subscription has remaining device allocation.\par
+\pard\li360\sa80 During offline processing, verify fingerprint data before final activation.\par
+\pard\li360\sa80 Show subscription, license, and activation statuses separately where operational clarity is required.\par
+\pard\sa200\b\fs28 14. Source Documents\par
+\pard\li360\sa80\b0 docs\\license-server-manager-overview.md\par
+\pard\li360\sa80 docs\\workflow-and-status-reference.md\par
+\pard\li360\sa80 docs\\help-guide.md\par
+\pard\sa200\fs22 End of document.\par
+}

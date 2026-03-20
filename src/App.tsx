@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   LayoutDashboard, 
   CreditCard, 
@@ -202,6 +202,238 @@ const Card = ({ children, className, title, subtitle, action }: { children: Reac
   </div>
 );
 
+type DataTableColumn<T> = {
+  key: string;
+  label: string;
+  sortable?: boolean;
+  accessor: (row: T) => string | number;
+  render: (row: T) => React.ReactNode;
+};
+
+type DataTableExportOptions = {
+  csv?: boolean;
+  excel?: boolean;
+  pdf?: boolean;
+};
+
+function DataTable<T>({
+  rows,
+  columns,
+  searchPlaceholder = 'Search...',
+  exportOptions = { csv: true, excel: true, pdf: true },
+  exportFileName = 'datatable-export',
+}: {
+  rows: T[];
+  columns: DataTableColumn<T>[];
+  searchPlaceholder?: string;
+  exportOptions?: DataTableExportOptions;
+  exportFileName?: string;
+}) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+
+  const filteredRows = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((row) =>
+      columns.some((column) => String(column.accessor(row)).toLowerCase().includes(term))
+    );
+  }, [rows, columns, searchTerm]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return filteredRows;
+    const column = columns.find((item) => item.key === sortKey);
+    if (!column) return filteredRows;
+
+    return [...filteredRows].sort((a, b) => {
+      const aValue = String(column.accessor(a)).toLowerCase();
+      const bValue = String(column.accessor(b)).toLowerCase();
+      const compare = aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' });
+      return sortDirection === 'asc' ? compare : -compare;
+    });
+  }, [filteredRows, columns, sortKey, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const pagedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, sortKey, sortDirection, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const toggleSort = (columnKey: string) => {
+    if (sortKey === columnKey) {
+      setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortKey(columnKey);
+    setSortDirection('asc');
+  };
+
+  const exportRows = sortedRows.map((row) =>
+    columns.map((column) => String(column.accessor(row)))
+  );
+
+  const downloadBlob = (content: BlobPart, fileName: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportCsv = () => {
+    const header = columns.map((column) => `"${column.label.replace(/"/g, '""')}"`).join(',');
+    const body = exportRows
+      .map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    downloadBlob(`${header}\n${body}`, `${exportFileName}.csv`, 'text/csv;charset=utf-8;');
+  };
+
+  const exportExcel = () => {
+    const header = columns.map((column) => column.label).join('\t');
+    const body = exportRows.map((row) => row.join('\t')).join('\n');
+    downloadBlob(`${header}\n${body}`, `${exportFileName}.xls`, 'application/vnd.ms-excel');
+  };
+
+  const exportPdf = () => {
+    const printWindow = window.open('', '_blank', 'width=1024,height=768');
+    if (!printWindow) return;
+    const tableHead = columns.map((column) => `<th style="padding:8px;border:1px solid #dbe3ef;text-align:left;">${column.label}</th>`).join('');
+    const tableBody = exportRows.map((row) =>
+      `<tr>${row.map((value) => `<td style="padding:8px;border:1px solid #dbe3ef;">${value}</td>`).join('')}</tr>`
+    ).join('');
+    printWindow.document.write(`
+      <html>
+        <head><title>${exportFileName}</title></head>
+        <body style="font-family:Arial, sans-serif; padding:24px;">
+          <table style="border-collapse:collapse; width:100%;">
+            <thead><tr>${tableHead}</tr></thead>
+            <tbody>${tableBody}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full lg:max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder={searchPlaceholder}
+            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {exportOptions.csv !== false && (
+            <button onClick={exportCsv} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">CSV</button>
+          )}
+          {exportOptions.excel !== false && (
+            <button onClick={exportExcel} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">Excel</button>
+          )}
+          {exportOptions.pdf !== false && (
+            <button onClick={exportPdf} className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">PDF</button>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-slate-100">
+              {columns.map((column) => (
+                <th key={column.key} className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <button
+                    type="button"
+                    onClick={() => column.sortable && toggleSort(column.key)}
+                    className={cn("inline-flex items-center gap-1", column.sortable ? "hover:text-slate-600" : "cursor-default")}
+                  >
+                    {column.label}
+                    {column.sortable && sortKey === column.key && (
+                      <ChevronRight size={12} className={cn(sortDirection === 'asc' ? "-rotate-90" : "rotate-90")} />
+                    )}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {pagedRows.map((row, index) => (
+              <tr key={index} className="hover:bg-slate-50/50 transition-colors">
+                {columns.map((column) => (
+                  <td key={column.key} className="px-4 py-4 align-top">
+                    {column.render(row)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {pagedRows.length === 0 && (
+              <tr>
+                <td colSpan={columns.length} className="px-4 py-8 text-center text-sm text-slate-400">
+                  No matching records found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <p className="text-xs text-slate-500">
+          Showing {pagedRows.length === 0 ? 0 : (page - 1) * pageSize + 1} to {Math.min(page * pageSize, sortedRows.length)} of {sortedRows.length}
+        </p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600"
+          >
+            <option value={5}>5 / page</option>
+            <option value={10}>10 / page</option>
+            <option value={20}>20 / page</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1}
+              className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="text-xs font-bold text-slate-500">Page {page} of {totalPages}</span>
+            <button
+              type="button"
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page === totalPages}
+              className="px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const StatCard = ({ label, value, icon: Icon, trend, color }: { label: string, value: string | number, icon: any, trend?: string, color: string }) => (
   <Card className="relative overflow-hidden group">
     <div className="flex items-start justify-between">
@@ -225,6 +457,7 @@ const StatCard = ({ label, value, icon: Icon, trend, color }: { label: string, v
 // --- Main App ---
 
 export default function App() {
+  const CUSTOM_PLAN_ID = 'custom-plan';
   const [activeTab, setActiveTab] = useState('dashboard');
   const [collapsed, setCollapsed] = useState(false);
   const [user, setUser] = useState<User>(MOCK_USERS[0]);
@@ -245,8 +478,10 @@ export default function App() {
   const [showCreateSub, setShowCreateSub] = useState(false);
   const [newSubAllocations, setNewSubAllocations] = useState<DeviceAllocation[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>('');
+  const [subscriptionFormError, setSubscriptionFormError] = useState('');
   const [subscriptionTab, setSubscriptionTab] = useState<'plans' | 'manage'>('manage');
   const [licenseTab, setLicenseTab] = useState<'inventory' | 'offline'>('inventory');
+  const [offlineManagementTab, setOfflineManagementTab] = useState<'requests' | 'activated'>('requests');
 
   useEffect(() => {
     if (showCreateSub) {
@@ -256,6 +491,7 @@ export default function App() {
         count: 0
       })));
       setSelectedPlanId('');
+      setSubscriptionFormError('');
     }
   }, [showCreateSub, deviceTypes]);
   const [showActivateSub, setShowActivateSub] = useState<{ id: string, company: string } | null>(null);
@@ -273,6 +509,7 @@ export default function App() {
   const [showOfflineLicenseModal, setShowOfflineLicenseModal] = useState(false);
   const [showOfflineRequestModal, setShowOfflineRequestModal] = useState(false);
   const [selectedOfflineLicenseId, setSelectedOfflineLicenseId] = useState<string | null>(null);
+  const [selectedOfflineSubscriptionId, setSelectedOfflineSubscriptionId] = useState<string>('');
   const [selectedOfflineArtifact, setSelectedOfflineArtifact] = useState<{ title: string; content: string } | null>(null);
   const [editingDeviceType, setEditingDeviceType] = useState<DeviceType | null>(null);
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
@@ -284,19 +521,81 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[0]);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
+  const customPlanOption: SubscriptionPlan = {
+    id: CUSTOM_PLAN_ID,
+    code: 'CUSTOM',
+    name: 'Custom',
+    productType: 'Digital Signage',
+    status: 'Active',
+    duration: 0,
+    mode: 'Periodic',
+    totalDeviceLimit: 0,
+    deviceLimitLabel: 'Custom Limit',
+    description: 'Custom subscription configured as per request.',
+    highlights: ['Manual duration and start date can be defined during subscription creation.'],
+    features: ['Configurable allocation'],
+    price: 0,
+    billingLabel: 'Custom',
+  };
+
+  const getPlanById = (planId?: string) => {
+    if (!planId) return undefined;
+    return plans.find((plan) => plan.id === planId) ?? (planId === CUSTOM_PLAN_ID ? customPlanOption : undefined);
+  };
+
+  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId);
+  const isCustomSubscriptionPlan = selectedPlanId === CUSTOM_PLAN_ID;
+  const selectedPlanLimit = selectedPlan?.totalDeviceLimit ?? 0;
+  const totalAllocatedDevices = newSubAllocations.reduce((sum, allocation) => sum + allocation.count, 0);
+  const isAllocationLimitExceeded = Boolean(
+    selectedPlan &&
+    selectedPlanLimit > 0 &&
+    totalAllocatedDevices > selectedPlanLimit
+  );
+  const subscriptionAllocationError = isAllocationLimitExceeded
+    ? `Total allocation (${totalAllocatedDevices}) exceeds the selected plan limit (${selectedPlan?.deviceLimitLabel ?? selectedPlanLimit}).`
+    : '';
+
   const handleCreateSubscription = (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
+    const companyId = (formData.get('companyId') as string)?.trim();
     const planId = formData.get('planId') as string;
-    const plan = plans.find(p => p.id === planId);
-    
-    if (!plan) return;
+    const isCustomPlan = planId === CUSTOM_PLAN_ID;
+    const plan = isCustomPlan ? customPlanOption : plans.find(p => p.id === planId);
+
+    if (!companyId) {
+      setSubscriptionFormError('Please select a company before submitting the subscription request.');
+      return;
+    }
+
+    if (!planId || !plan) {
+      setSubscriptionFormError('Please select a plan before submitting the subscription request.');
+      return;
+    }
+
+    if (isCustomPlan) {
+      const requestedStartDate = (formData.get('startDate') as string)?.trim();
+      const requestedDurationValue = Number(formData.get('duration') || 0);
+
+      if (!requestedStartDate) {
+        setSubscriptionFormError('Start date is required for a custom subscription.');
+        return;
+      }
+
+      if (!Number.isFinite(requestedDurationValue) || requestedDurationValue <= 0) {
+        setSubscriptionFormError('Duration must be greater than 0 for a custom subscription.');
+        return;
+      }
+    }
+
+    setSubscriptionFormError('');
     const planLimit = plan.totalDeviceLimit === 0 ? Number.MAX_SAFE_INTEGER : plan.totalDeviceLimit;
 
     // Validate total allocation
     const totalAllocated = newSubAllocations.reduce((sum, a) => sum + a.count, 0);
     if (totalAllocated > planLimit) {
-      alert(`Total allocation (${totalAllocated}) exceeds plan limit (${plan.deviceLimitLabel ?? plan.totalDeviceLimit})`);
+      setSubscriptionFormError(`Total allocation (${totalAllocated}) exceeds the selected plan limit (${plan.deviceLimitLabel ?? plan.totalDeviceLimit}).`);
       return;
     }
 
@@ -309,13 +608,19 @@ export default function App() {
       }
     }
 
+    const requestedStartDate = (formData.get('startDate') as string) || new Date().toISOString().split('T')[0];
+    const requestedDuration = Number(formData.get('duration') || plan.duration || 0);
+    const computedEndDate = requestedDuration > 0
+      ? new Date(new Date(requestedStartDate).getTime() + (requestedDuration * 24 * 60 * 60 * 1000)).toISOString().split('T')[0]
+      : 'No Expiry';
+
     const subData = {
       id: `sub-${Date.now()}`,
-      companyId: formData.get('companyId') as string,
+      companyId,
       planId: planId,
       status: 'Pending' as SubscriptionStatus,
-      startDate: formData.get('startDate') as string,
-      endDate: new Date(new Date(formData.get('startDate') as string).getTime() + (Number(formData.get('duration')) * 24 * 60 * 60 * 1000)).toISOString().split('T')[0],
+      startDate: requestedStartDate,
+      endDate: computedEndDate,
       requestedAt: new Date().toISOString().split('T')[0],
       allocations: finalAllocations,
     };
@@ -342,22 +647,38 @@ export default function App() {
   };
 
   const [selectedSubId, setSelectedSubId] = useState<string>('');
-  const [selectedDeviceTypeId, setSelectedDeviceTypeId] = useState<string>('');
 
   const handleGenerateKey = () => {
-    if (!selectedSubId || !selectedDeviceTypeId) {
-      alert('Please select a subscription and device type');
+    if (!selectedSubId) {
+      alert('Please select a subscription');
       return;
     }
 
     const sub = subscriptions.find(s => s.id === selectedSubId);
     if (!sub) return;
 
-    const allocation = sub.allocations?.find(a => a.deviceTypeId === selectedDeviceTypeId);
+    const nextAvailableAllocation = sub.allocations
+      ?.map(allocation => {
+        const usedCount = licenses.filter(l =>
+          l.subscriptionId === selectedSubId &&
+          l.deviceTypeId === allocation.deviceTypeId &&
+          l.status === 'Active'
+        ).length;
+
+        return {
+          allocation,
+          usedCount,
+        };
+      })
+      .find(item => item.usedCount < item.allocation.count);
+
+    const allocation = nextAvailableAllocation?.allocation;
     if (!allocation) {
-      alert('This device type is not allocated for this subscription');
+      alert('No device allocation is available for this subscription');
       return;
     }
+
+    const selectedDeviceTypeId = allocation.deviceTypeId;
 
     // Count existing active licenses for this sub and device type
     const existingLicensesCount = licenses.filter(l => 
@@ -391,7 +712,6 @@ export default function App() {
       setIsProcessing(false);
       setGeneratedKey(newKey);
       setSelectedSubId('');
-      setSelectedDeviceTypeId('');
     }, 1200);
   };
 
@@ -565,8 +885,12 @@ export default function App() {
     const formData = new FormData(e.target as HTMLFormElement);
     const subscriptionId = formData.get('subscriptionId') as string;
     const subscription = subscriptions.find(item => item.id === subscriptionId);
-    const plan = plans.find(item => item.id === subscription?.planId);
+    const plan = getPlanById(subscription?.planId);
     if (!subscription || !plan) return;
+    const activeAllocations = subscription.allocations.filter(item => item.count > 0);
+    const primaryAllocation = activeAllocations[0];
+    const derivedSeats = activeAllocations.reduce((sum, item) => sum + item.count, 0);
+    if (!primaryAllocation) return;
 
     const newRecord: OfflineLicenseRecord = {
       id: `off-${Date.now()}`,
@@ -574,8 +898,8 @@ export default function App() {
       subscriptionId,
       planId: subscription.planId,
       productType: plan.productType,
-      deviceTypeId: formData.get('deviceTypeId') as string,
-      seats: Number(formData.get('seats') || 1),
+      deviceTypeId: primaryAllocation.deviceTypeId,
+      seats: derivedSeats,
       status: 'Pending Approval',
       notes: (formData.get('notes') as string)?.trim() || 'Awaiting subscription approval.',
       createdAt: new Date().toISOString().split('T')[0],
@@ -586,6 +910,7 @@ export default function App() {
       setOfflineLicenses(prev => [newRecord, ...prev]);
       setIsProcessing(false);
       setShowOfflineLicenseModal(false);
+      setSelectedOfflineSubscriptionId('');
     }, 700);
   };
 
@@ -838,7 +1163,7 @@ export default function App() {
                         <p className="text-xs text-slate-500">Requested: {sub.requestedAt}</p>
                       </td>
                       <td className="px-4 py-4">
-                        <p className="text-sm text-slate-700 font-medium">{plans.find(p => p.id === sub.planId)?.name}</p>
+                        <p className="text-sm text-slate-700 font-medium">{getPlanById(sub.planId)?.name}</p>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col gap-1">
@@ -956,120 +1281,122 @@ export default function App() {
     );
   };
 
-  const CompaniesView = () => (
-    <Card 
-      title="Company Directory" 
-      subtitle="Manage client profiles and linked assets" 
-      action={
-        <button 
-          onClick={() => { setEditingCompany(null); setShowCompanyModal(true); }}
-          className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-600 transition-colors"
-        >
-          <Plus size={16} /> Add Company
-        </button>
-      }
-    >
-      <div className="overflow-x-auto">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-slate-100">
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Company Name</th>
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Industry</th>
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Contact Person</th>
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Assets</th>
-              <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {companies.map((company) => (
-              <tr key={company.id} className={cn("hover:bg-slate-50/50 transition-colors", (company.status === 'Disabled' || company.status === 'Suspended') && "opacity-60")}>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-2">
-                    <div>
-                      <p className="text-sm font-bold text-slate-900">{company.name}</p>
-                      <p className="text-[10px] text-slate-400 font-mono">ID: {company.id}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">{company.industry}</span>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex flex-col">
-                    <p className="text-sm font-medium text-slate-900">{company.contactPerson}</p>
-                    <p className="text-xs text-slate-500">{company.email}</p>
-                    <p className="text-[10px] text-slate-400">{company.primaryMobile}</p>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <div className={cn(
-                        "w-2 h-2 rounded-full",
-                        company.status === 'Active' ? "bg-emerald-500" : 
-                        company.status === 'Disabled' ? "bg-slate-400" :
-                        company.status === 'Suspended' ? "bg-rose-500" : "bg-amber-500"
-                      )} />
-                      <span className="text-xs font-medium text-slate-700">{company.status}</span>
-                    </div>
-                    {company.statusDescription && (
-                      <p className="text-[10px] text-slate-400 italic max-w-[150px] truncate" title={company.statusDescription}>
-                        {company.statusDescription}
-                      </p>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-3">
-                    <button 
-                      onClick={() => setShowActivePlan(company)}
-                      className="flex items-center gap-1 text-xs text-emerald-600 font-bold hover:bg-emerald-50 px-2 py-1 rounded-lg transition-colors" 
-                      title="View Subscriptions"
-                    >
-                      <CreditCard size={14} /> {company.linkedSubscriptions.length}
-                    </button>
-                    <button 
-                      onClick={() => setShowActivePlan(company)}
-                      className="flex items-center gap-1 text-xs text-indigo-600 font-bold hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors" 
-                      title="View Licenses"
-                    >
-                      <Key size={14} /> {company.linkedLicenses.length}
-                    </button>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-1">
-                    <button 
-                      onClick={() => { setEditingCompany(company); setShowCompanyModal(true); }}
-                      className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                      title="Edit Company"
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button 
-                      onClick={() => setShowDeleteCompany(company)}
-                      className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                      title="Delete Company"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                    <button 
-                      onClick={() => setShowSuspendModal(company)}
-                      className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                      title="Ban/Suspend Company"
-                    >
-                      <Ban size={16} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
+  const CompaniesView = () => {
+    const companyColumns: DataTableColumn<Company>[] = [
+      {
+        key: 'company',
+        label: 'Company Name',
+        sortable: true,
+        accessor: (company) => `${company.name} ${company.id}`,
+        render: (company) => (
+          <div className="flex items-center gap-2">
+            <div>
+              <p className="text-sm font-bold text-slate-900">{company.name}</p>
+              <p className="text-[10px] text-slate-400 font-mono">ID: {company.id}</p>
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: 'industry',
+        label: 'Industry',
+        sortable: true,
+        accessor: (company) => company.industry,
+        render: (company) => <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">{company.industry}</span>,
+      },
+      {
+        key: 'contact',
+        label: 'Contact Person',
+        sortable: true,
+        accessor: (company) => `${company.contactPerson} ${company.email} ${company.primaryMobile}`,
+        render: (company) => (
+          <div className="flex flex-col">
+            <p className="text-sm font-medium text-slate-900">{company.contactPerson}</p>
+            <p className="text-xs text-slate-500">{company.email}</p>
+            <p className="text-[10px] text-slate-400">{company.primaryMobile}</p>
+          </div>
+        ),
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        sortable: true,
+        accessor: (company) => `${company.status} ${company.statusDescription ?? ''}`,
+        render: (company) => (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "w-2 h-2 rounded-full",
+                company.status === 'Active' ? "bg-emerald-500" :
+                company.status === 'Disabled' ? "bg-slate-400" :
+                company.status === 'Suspended' ? "bg-rose-500" : "bg-amber-500"
+              )} />
+              <span className="text-xs font-medium text-slate-700">{company.status}</span>
+            </div>
+            {company.statusDescription && (
+              <p className="text-[10px] text-slate-400 italic max-w-[150px] truncate" title={company.statusDescription}>
+                {company.statusDescription}
+              </p>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'assets',
+        label: 'Assets',
+        sortable: true,
+        accessor: (company) => `${company.linkedSubscriptions.length} ${company.linkedLicenses.length}`,
+        render: (company) => (
+          <div className="flex items-center gap-3">
+            <button onClick={() => setShowActivePlan(company)} className="flex items-center gap-1 text-xs text-emerald-600 font-bold hover:bg-emerald-50 px-2 py-1 rounded-lg transition-colors" title="View Subscriptions">
+              <CreditCard size={14} /> {company.linkedSubscriptions.length}
+            </button>
+            <button onClick={() => setShowActivePlan(company)} className="flex items-center gap-1 text-xs text-indigo-600 font-bold hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors" title="View Licenses">
+              <Key size={14} /> {company.linkedLicenses.length}
+            </button>
+          </div>
+        ),
+      },
+      {
+        key: 'actions',
+        label: 'Actions',
+        accessor: () => 'actions',
+        render: (company) => (
+          <div className="flex items-center gap-1">
+            <button onClick={() => { setEditingCompany(company); setShowCompanyModal(true); }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Edit Company">
+              <Pencil size={16} />
+            </button>
+            <button onClick={() => setShowDeleteCompany(company)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete Company">
+              <Trash2 size={16} />
+            </button>
+            <button onClick={() => setShowSuspendModal(company)} className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Ban/Suspend Company">
+              <Ban size={16} />
+            </button>
+          </div>
+        ),
+      },
+    ];
+
+    return (
+      <Card
+        title="Company Directory"
+        subtitle="Manage client profiles and linked assets"
+        action={
+          <button onClick={() => { setEditingCompany(null); setShowCompanyModal(true); }} className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-emerald-600 transition-colors">
+            <Plus size={16} /> Add Company
+          </button>
+        }
+      >
+        <DataTable
+          rows={companies}
+          columns={companyColumns}
+          searchPlaceholder="Search companies..."
+          exportOptions={{ csv: true, excel: true, pdf: true }}
+          exportFileName="company-directory"
+        />
+      </Card>
+    );
+  };
 
   const LicensesView = () => (
     <div className="space-y-6">
@@ -1158,54 +1485,46 @@ export default function App() {
                 <label className="text-xs font-bold text-slate-500 uppercase">Select Subscription</label>
                 <select
                   value={selectedSubId}
-                  onChange={(e) => {
-                    setSelectedSubId(e.target.value);
-                    setSelectedDeviceTypeId('');
-                  }}
+                  onChange={(e) => setSelectedSubId(e.target.value)}
                   className="w-full mt-1.5 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 >
                   <option value="">Choose an approved subscription...</option>
                   {subscriptions.filter(s => s.status === 'Active').map(s => (
                     <option key={s.id} value={s.id}>
-                      {companies.find(c => c.id === s.companyId)?.name} - {plans.find(p => p.id === s.planId)?.name}
+                      {companies.find(c => c.id === s.companyId)?.name} - {getPlanById(s.planId)?.name}
                     </option>
                   ))}
                 </select>
               </div>
 
               {selectedSubId && (
-                <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase">Select Device Type</label>
-                  <select
-                    value={selectedDeviceTypeId}
-                    onChange={(e) => setSelectedDeviceTypeId(e.target.value)}
-                    className="w-full mt-1.5 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                  >
-                    <option value="">Choose device type...</option>
-                    {subscriptions.find(s => s.id === selectedSubId)?.allocations?.map(alloc => {
-                      const dt = deviceTypes.find(d => d.id === alloc.deviceTypeId);
-                      if (!dt || dt.status === 'Inactive') return null;
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <p className="text-xs font-bold text-slate-500 uppercase">Selected Plan & Device Allocation</p>
+                  <div className="flex items-center justify-between text-sm text-slate-700">
+                    <span>Plan</span>
+                    <span className="font-bold text-slate-900">{getPlanById(subscriptions.find(s => s.id === selectedSubId)?.planId)?.name}</span>
+                  </div>
+                  {subscriptions.find(s => s.id === selectedSubId)?.allocations?.map(alloc => {
+                    const dt = deviceTypes.find(d => d.id === alloc.deviceTypeId);
+                    if (!dt || dt.status === 'Inactive') return null;
 
-                      const usedCount = licenses.filter(l =>
-                        l.subscriptionId === selectedSubId &&
-                        l.deviceTypeId === dt.id &&
-                        l.status === 'Active'
-                      ).length;
-
-                      return (
-                        <option key={dt.id} value={dt.id} disabled={usedCount >= alloc.count}>
-                          {dt.name} ({usedCount}/{alloc.count} used)
-                        </option>
-                      );
-                    })}
-                  </select>
+                    return (
+                      <div key={dt.id} className="flex items-center justify-between text-sm text-slate-700">
+                        <span>{dt.name}</span>
+                        <span className="font-bold text-slate-900">{alloc.count}</span>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] text-slate-500">
+                    The next license will be generated against the first available allocation automatically.
+                  </p>
                 </div>
               )}
 
               <div className="pt-4">
                 <button
                   onClick={handleGenerateKey}
-                  disabled={isProcessing || !selectedSubId || !selectedDeviceTypeId}
+                  disabled={isProcessing || !selectedSubId}
                   className="w-full py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isProcessing ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Key size={18} />}
@@ -1313,7 +1632,7 @@ export default function App() {
                 <tbody className="divide-y divide-slate-50">
                   {offlineLicenses.map((record) => {
                     const company = companies.find(item => item.id === record.companyId);
-                    const plan = plans.find(item => item.id === record.planId);
+                    const plan = getPlanById(record.planId);
                     return (
                       <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-4">
@@ -1358,76 +1677,132 @@ export default function App() {
             </div>
           </Card>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <Card title="Activation Requests" subtitle="Bind incoming .req files to issued licenses">
-              <div className="space-y-4">
-                {offlineRequests.map((request) => {
-                  const record = offlineLicenses.find(item => item.id === request.offlineLicenseId);
-                  const company = companies.find(item => item.id === record?.companyId);
-                  return (
-                    <div key={request.id} className="p-4 border border-slate-100 rounded-2xl bg-slate-50/50 space-y-3">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="font-bold text-slate-900">{company?.name}</p>
-                          <p className="text-xs text-slate-500">{request.requestFileName}</p>
-                        </div>
-                        <OfflineStatusBadge status={request.status} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
-                        <p>Machine: <span className="font-bold text-slate-900">{request.fingerprint.machineName}</span></p>
-                        <p>Hash: <span className="font-mono text-slate-900">{request.fingerprintHash}</span></p>
-                        <p>Host: <span className="font-bold text-slate-900">{request.fingerprint.hostName}</span></p>
-                        <p>OS Hash: <span className="font-mono text-slate-900">{request.fingerprint.osHash}</span></p>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <button onClick={() => record && openOfflineArtifact('request', record)} className="text-xs font-bold text-slate-600 hover:text-slate-900">Preview .req</button>
-                        {request.status === 'Uploaded' && record && (
-                          <button onClick={() => handleActivateOffline(record.id)} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold hover:bg-emerald-600 transition-colors">
-                            Bind & Activate
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {offlineRequests.length === 0 && (
-                  <p className="text-sm text-slate-400 italic py-6 text-center border border-dashed border-slate-200 rounded-2xl">No offline fingerprint requests uploaded yet.</p>
-                )}
+          <Card
+            title="Offline Processing Queue"
+            subtitle="Review activation requests and completed offline activations in table format"
+          >
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 border-b border-slate-200">
+                <button
+                  onClick={() => setOfflineManagementTab('requests')}
+                  className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-colors", offlineManagementTab === 'requests' ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500 hover:text-slate-700")}
+                >
+                  Activation Requests
+                </button>
+                <button
+                  onClick={() => setOfflineManagementTab('activated')}
+                  className={cn("px-4 py-2 text-sm font-bold border-b-2 transition-colors", offlineManagementTab === 'activated' ? "border-emerald-500 text-emerald-600" : "border-transparent text-slate-500 hover:text-slate-700")}
+                >
+                  Activated Offline Licenses
+                </button>
               </div>
-            </Card>
 
-            <Card title="Activated Offline Licenses" subtitle="Final .lic artifacts ready for manual transfer">
-              <div className="space-y-4">
-                {offlineLicenses.filter(item => item.status === 'Activated').map((record) => {
-                  const company = companies.find(item => item.id === record.companyId);
-                  return (
-                    <div key={record.id} className="p-4 border border-emerald-100 rounded-2xl bg-emerald-50/40 space-y-3">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="font-bold text-slate-900">{company?.name}</p>
-                          <p className="text-xs text-slate-500">{record.finalLicenseFileName}</p>
-                        </div>
-                        <OfflineStatusBadge status={record.status} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
-                        <p>Activated At: <span className="font-bold text-slate-900">{record.activatedAt}</span></p>
-                        <p>Fingerprint: <span className="font-mono text-slate-900">{record.fingerprintHash}</span></p>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <p className="text-[10px] text-slate-500">{record.notes}</p>
-                        <button onClick={() => openOfflineArtifact('final-license', record)} className="px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors">
-                          Preview Final .lic
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {offlineLicenses.filter(item => item.status === 'Activated').length === 0 && (
+              {offlineManagementTab === 'requests' ? (
+                offlineRequests.length === 0 ? (
+                  <p className="text-sm text-slate-400 italic py-6 text-center border border-dashed border-slate-200 rounded-2xl">No offline fingerprint requests uploaded yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Company</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Request File</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Machine</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Fingerprint</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {offlineRequests.map((request) => {
+                          const record = offlineLicenses.find(item => item.id === request.offlineLicenseId);
+                          const company = companies.find(item => item.id === record?.companyId);
+                          return (
+                            <tr key={request.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-4 py-4">
+                                <p className="text-sm font-bold text-slate-900">{company?.name}</p>
+                                <p className="text-[10px] text-slate-400">{request.uploadedAt}</p>
+                              </td>
+                              <td className="px-4 py-4 text-xs text-slate-600">{request.requestFileName}</td>
+                              <td className="px-4 py-4">
+                                <p className="text-xs font-bold text-slate-900">{request.fingerprint.machineName}</p>
+                                <p className="text-[10px] text-slate-400">{request.fingerprint.hostName}</p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <p className="text-xs font-mono text-slate-700">{request.fingerprintHash}</p>
+                                <p className="text-[10px] text-slate-400">{request.fingerprint.osHash}</p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <OfflineStatusBadge status={request.status} />
+                              </td>
+                              <td className="px-4 py-4">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button onClick={() => record && openOfflineArtifact('request', record)} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Preview .req"><ExternalLink size={16} /></button>
+                                  {request.status === 'Uploaded' && record && (
+                                    <button onClick={() => handleActivateOffline(record.id)} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold hover:bg-emerald-600 transition-colors">
+                                      Bind & Activate
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : (
+                offlineLicenses.filter(item => item.status === 'Activated').length === 0 ? (
                   <p className="text-sm text-slate-400 italic py-6 text-center border border-dashed border-slate-200 rounded-2xl">No activated offline licenses available yet.</p>
-                )}
-              </div>
-            </Card>
-          </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Company</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Final License</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Activated At</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Fingerprint</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
+                          <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {offlineLicenses.filter(item => item.status === 'Activated').map((record) => {
+                          const company = companies.find(item => item.id === record.companyId);
+                          return (
+                            <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-4 py-4">
+                                <p className="text-sm font-bold text-slate-900">{company?.name}</p>
+                                <p className="text-[10px] text-slate-400">{record.id}</p>
+                              </td>
+                              <td className="px-4 py-4 text-xs text-slate-600">{record.finalLicenseFileName}</td>
+                              <td className="px-4 py-4 text-xs text-slate-600">{record.activatedAt}</td>
+                              <td className="px-4 py-4">
+                                <p className="text-xs font-mono text-slate-700">{record.fingerprintHash}</p>
+                                <p className="text-[10px] text-slate-400">{record.requestFileName}</p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <OfflineStatusBadge status={record.status} />
+                              </td>
+                              <td className="px-4 py-4">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button onClick={() => openOfflineArtifact('final-license', record)} className="px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors">
+                                    Preview Final .lic
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
+            </div>
+          </Card>
         </div>
       )}
     </div>
@@ -1559,70 +1934,74 @@ export default function App() {
               </button>
             }
           >
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">User</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Designation</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Mobile</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Role</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {users.map((u) => (
-                    <tr key={u.id} className={cn("hover:bg-slate-50/50 transition-colors", u.isDisabled && "opacity-60")}>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-3">
-                          {u.profilePhoto ? (
-                            <img src={u.profilePhoto} alt={u.name} className="w-8 h-8 rounded-full object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-xs uppercase">
-                              {u.name.charAt(0)}
-                            </div>
-                          )}
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-bold text-slate-900">{u.name}</p>
-                              {u.isDisabled && <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[8px] font-bold uppercase">Disabled</span>}
-                            </div>
-                            <p className="text-xs text-slate-500">{u.email}</p>
-                          </div>
+            <DataTable
+              rows={users}
+              searchPlaceholder="Search users..."
+              exportOptions={{ csv: true, excel: true, pdf: false }}
+              exportFileName="system-users"
+              columns={[
+                {
+                  key: 'user',
+                  label: 'User',
+                  sortable: true,
+                  accessor: (u) => `${u.name} ${u.email}`,
+                  render: (u) => (
+                    <div className="flex items-center gap-3">
+                      {u.profilePhoto ? (
+                        <img src={u.profilePhoto} alt={u.name} className="w-8 h-8 rounded-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-xs uppercase">
+                          {u.name.charAt(0)}
                         </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <p className="text-xs font-medium text-slate-700">{u.designation}</p>
-                      </td>
-                      <td className="px-4 py-4">
-                        <p className="text-xs text-slate-500">{u.mobile}</p>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">{u.role}</span>
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button 
-                            onClick={() => { setEditingUser(u); setShowUserModal(true); }}
-                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors"
-                            title="Edit User Profile"
-                          >
-                            <UserCircle size={18} />
-                          </button>
-                          <button 
-                            onClick={() => setShowDeleteUser(u)}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"
-                            title="Delete User"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                      )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-slate-900">{u.name}</p>
+                          {u.isDisabled && <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[8px] font-bold uppercase">Disabled</span>}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        <p className="text-xs text-slate-500">{u.email}</p>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'designation',
+                  label: 'Designation',
+                  sortable: true,
+                  accessor: (u) => u.designation,
+                  render: (u) => <p className="text-xs font-medium text-slate-700">{u.designation}</p>,
+                },
+                {
+                  key: 'mobile',
+                  label: 'Mobile',
+                  sortable: true,
+                  accessor: (u) => u.mobile,
+                  render: (u) => <p className="text-xs text-slate-500">{u.mobile}</p>,
+                },
+                {
+                  key: 'role',
+                  label: 'Role',
+                  sortable: true,
+                  accessor: (u) => u.role,
+                  render: (u) => <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-bold uppercase tracking-wider">{u.role}</span>,
+                },
+                {
+                  key: 'actions',
+                  label: 'Actions',
+                  accessor: () => 'actions',
+                  render: (u) => (
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => { setEditingUser(u); setShowUserModal(true); }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors" title="Edit User Profile">
+                        <UserCircle size={18} />
+                      </button>
+                      <button onClick={() => setShowDeleteUser(u)} className="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors" title="Delete User">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </Card>
         ) : adminTab === 'device-types' ? (
           <Card 
@@ -1637,53 +2016,56 @@ export default function App() {
               </button>
             }
           >
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">ID</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Name</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {deviceTypes.map((dt) => (
-                    <tr key={dt.id} className={cn("hover:bg-slate-50/50 transition-colors", dt.status === 'Inactive' && "opacity-60")}>
-                      <td className="px-4 py-4">
-                        <code className="text-xs font-mono text-slate-500">{dt.id}</code>
-                      </td>
-                      <td className="px-4 py-4">
-                        <p className="text-sm font-bold text-slate-900">{dt.name}</p>
-                      </td>
-                      <td className="px-4 py-4">
-                        <StatusBadge status={dt.status} />
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button 
-                            onClick={() => { setEditingDeviceType(dt); setShowDeviceTypeModal(dt.status === 'Active'); setShowDeviceTypeModal(true); }}
-                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                            title="Edit Device Type"
-                          >
-                            <Pencil size={18} />
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setDeviceTypes(prev => prev.map(item => item.id === dt.id ? { ...item, status: item.status === 'Active' ? 'Inactive' : 'Active' } : item));
-                            }}
-                            className={cn("p-1.5 rounded-lg transition-colors", dt.status === 'Active' ? "text-rose-600 hover:bg-rose-50" : "text-emerald-600 hover:bg-emerald-50")}
-                            title={dt.status === 'Active' ? "Deactivate" : "Activate"}
-                          >
-                            {dt.status === 'Active' ? <Ban size={18} /> : <CheckCircle2 size={18} />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              rows={deviceTypes}
+              searchPlaceholder="Search device types..."
+              exportOptions={{ csv: false, excel: true, pdf: true }}
+              exportFileName="device-types"
+              columns={[
+                {
+                  key: 'id',
+                  label: 'ID',
+                  sortable: true,
+                  accessor: (dt) => dt.id,
+                  render: (dt) => <code className="text-xs font-mono text-slate-500">{dt.id}</code>,
+                },
+                {
+                  key: 'name',
+                  label: 'Name',
+                  sortable: true,
+                  accessor: (dt) => dt.name,
+                  render: (dt) => <p className="text-sm font-bold text-slate-900">{dt.name}</p>,
+                },
+                {
+                  key: 'status',
+                  label: 'Status',
+                  sortable: true,
+                  accessor: (dt) => dt.status,
+                  render: (dt) => <StatusBadge status={dt.status} />,
+                },
+                {
+                  key: 'actions',
+                  label: 'Actions',
+                  accessor: () => 'actions',
+                  render: (dt) => (
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => { setEditingDeviceType(dt); setShowDeviceTypeModal(true); }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Edit Device Type">
+                        <Pencil size={18} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDeviceTypes(prev => prev.map(item => item.id === dt.id ? { ...item, status: item.status === 'Active' ? 'Inactive' : 'Active' } : item));
+                        }}
+                        className={cn("p-1.5 rounded-lg transition-colors", dt.status === 'Active' ? "text-rose-600 hover:bg-rose-50" : "text-emerald-600 hover:bg-emerald-50")}
+                        title={dt.status === 'Active' ? "Deactivate" : "Activate"}
+                      >
+                        {dt.status === 'Active' ? <Ban size={18} /> : <CheckCircle2 size={18} />}
+                      </button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1805,8 +2187,8 @@ export default function App() {
 
           <nav className="flex-1 px-4 space-y-2 mt-4">
             <NavItem icon={LayoutDashboard} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} collapsed={collapsed} />
-            <NavItem icon={CreditCard} label="Subscriptions" active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} collapsed={collapsed} />
             <NavItem icon={Building2} label="Companies" active={activeTab === 'companies'} onClick={() => setActiveTab('companies')} collapsed={collapsed} />
+            <NavItem icon={CreditCard} label="Subscriptions" active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} collapsed={collapsed} />
             <NavItem icon={Key} label="Licenses" active={activeTab === 'licenses'} onClick={() => setActiveTab('licenses')} collapsed={collapsed} />
             <NavItem icon={BarChart3} label="Reports" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} collapsed={collapsed} />
             <div className="pt-4 pb-2">
@@ -1847,8 +2229,8 @@ export default function App() {
             {currentUser.menuPosition === 'topbar' && (
               <nav className="hidden lg:flex items-center gap-1">
                 <NavItem icon={LayoutDashboard} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} horizontal />
-                <NavItem icon={CreditCard} label="Subscriptions" active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} horizontal />
                 <NavItem icon={Building2} label="Companies" active={activeTab === 'companies'} onClick={() => setActiveTab('companies')} horizontal />
+                <NavItem icon={CreditCard} label="Subscriptions" active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} horizontal />
                 <NavItem icon={Key} label="Licenses" active={activeTab === 'licenses'} onClick={() => setActiveTab('licenses')} horizontal />
                 <NavItem icon={BarChart3} label="Reports" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} horizontal />
                 <NavItem icon={Settings} label="Admin" active={isAdministrationTab} onClick={() => setActiveTab('administration-users')} horizontal />
@@ -1954,7 +2336,12 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <label className="text-xs font-bold text-slate-500 uppercase">Company</label>
-                        <select name="companyId" required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                        <select
+                          name="companyId"
+                          required
+                          onChange={() => setSubscriptionFormError('')}
+                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                        >
                           <option value="">Select Company</option>
                           {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
@@ -1965,11 +2352,15 @@ export default function App() {
                           name="planId" 
                           required 
                           value={selectedPlanId}
-                          onChange={(e) => setSelectedPlanId(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedPlanId(e.target.value);
+                            setSubscriptionFormError('');
+                          }}
                           className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
                         >
                           <option value="">Select Plan</option>
-                          {plans.filter(p => p.status === 'Active').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          {plans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.status !== 'Active' ? ` (${p.status})` : ''}</option>)}
+                          <option value={CUSTOM_PLAN_ID}>Custom</option>
                         </select>
                       </div>
                     </div>
@@ -1978,9 +2369,11 @@ export default function App() {
                       <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-4">
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-bold text-slate-500 uppercase">Device Allocation</p>
-                          <p className="text-xs font-bold text-emerald-600">
-                            Limit: {plans.find(p => p.id === selectedPlanId)?.totalDeviceLimit}
-                          </p>
+                          {!isCustomSubscriptionPlan && (
+                            <p className="text-xs font-bold text-emerald-600">
+                              Limit: {selectedPlan?.totalDeviceLimit}
+                            </p>
+                          )}
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           {deviceTypes.filter(dt => dt.status === 'Active').map(dt => (
@@ -1992,6 +2385,7 @@ export default function App() {
                                 value={newSubAllocations.find(a => a.deviceTypeId === dt.id)?.count || 0}
                                 onChange={(e) => {
                                   const val = parseInt(e.target.value) || 0;
+                                  setSubscriptionFormError('');
                                   setNewSubAllocations(prev => prev.map(a => a.deviceTypeId === dt.id ? { ...a, count: val } : a));
                                 }}
                                 className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500/20 outline-none"
@@ -2003,31 +2397,47 @@ export default function App() {
                           <p className="text-xs font-bold text-slate-500">Total Allocated</p>
                           <p className={cn(
                             "text-sm font-bold",
-                            newSubAllocations.reduce((sum, a) => sum + a.count, 0) > (plans.find(p => p.id === selectedPlanId)?.totalDeviceLimit || 0) 
+                            isAllocationLimitExceeded
                               ? "text-rose-500" 
-                              : "text-emerald-600"
+                              : !isCustomSubscriptionPlan
+                                ? "text-emerald-600"
+                                : "text-slate-700"
                           )}>
-                            {newSubAllocations.reduce((sum, a) => sum + a.count, 0)} / {plans.find(p => p.id === selectedPlanId)?.totalDeviceLimit}
+                            {isCustomSubscriptionPlan
+                              ? totalAllocatedDevices
+                              : `${totalAllocatedDevices} / ${selectedPlan?.totalDeviceLimit}`}
                           </p>
                         </div>
+                        {subscriptionAllocationError && (
+                          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
+                            <p className="text-xs font-medium text-rose-600">{subscriptionAllocationError}</p>
+                          </div>
+                        )}
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Start Date</label>
-                        <input name="startDate" type="date" required className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                    {isCustomSubscriptionPlan && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-500 uppercase">Start Date</label>
+                          <input name="startDate" type="date" required onChange={() => setSubscriptionFormError('')} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-500 uppercase">Duration (Days)</label>
+                          <input name="duration" type="number" min="1" required defaultValue={30} onChange={() => setSubscriptionFormError('')} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                        </div>
                       </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Duration (Days)</label>
-                        <input name="duration" type="number" defaultValue={365} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none" />
+                    )}
+                    {subscriptionFormError && (
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
+                        <p className="text-xs font-medium text-rose-600">{subscriptionFormError}</p>
                       </div>
-                    </div>
+                    )}
                     <div className="pt-4">
                       <button 
                         type="submit"
-                        disabled={isProcessing}
-                        className="w-full py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+                        disabled={isProcessing || isAllocationLimitExceeded}
+                        className="w-full py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isProcessing ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Plus size={18} />}
                         {isProcessing ? 'Creating Request...' : 'Submit Subscription Request'}
@@ -2499,6 +2909,17 @@ export default function App() {
                 className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden"
               >
                 <div className="p-8">
+                  {(() => {
+                    const selectedSubscription = subscriptions.find(item => item.id === selectedOfflineSubscriptionId);
+                    const selectedPlan = getPlanById(selectedSubscription?.planId);
+                    const selectedCompany = companies.find(item => item.id === selectedSubscription?.companyId);
+                    const selectedAllocationSummary = selectedSubscription?.allocations
+                      ?.filter(item => item.count > 0)
+                      .map(item => `${deviceTypes.find(dt => dt.id === item.deviceTypeId)?.name || 'Unknown'}: ${item.count}`)
+                      .join(', ');
+                    const selectedSeatCount = selectedSubscription?.allocations?.reduce((sum, item) => sum + item.count, 0) || 0;
+                    return (
+                      <>
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-bold text-slate-900">Create Offline License</h2>
                     <button onClick={() => setShowOfflineLicenseModal(false)} className="text-slate-400 hover:text-slate-600"><XCircle size={24} /></button>
@@ -2509,42 +2930,27 @@ export default function App() {
                       <select
                         name="subscriptionId"
                         required
+                        value={selectedOfflineSubscriptionId}
+                        onChange={(e) => setSelectedOfflineSubscriptionId(e.target.value)}
                         className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
                       >
                         <option value="">Select subscription</option>
                         {subscriptions.filter(item => item.status === 'Active').map(item => (
                           <option key={item.id} value={item.id}>
-                            {companies.find(company => company.id === item.companyId)?.name} - {plans.find(plan => plan.id === item.planId)?.name}
+                            {companies.find(company => company.id === item.companyId)?.name} - {getPlanById(item.planId)?.name}
                           </option>
                         ))}
                       </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Device Type</label>
-                        <select
-                          name="deviceTypeId"
-                          required
-                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                        >
-                          <option value="">Select device type</option>
-                          {deviceTypes.filter(item => item.status === 'Active').map(item => (
-                            <option key={item.id} value={item.id}>{item.name}</option>
-                          ))}
-                        </select>
+                    {selectedSubscription && (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                        <p className="text-xs font-bold text-slate-500 uppercase">Derived From Subscription</p>
+                        <p className="text-sm text-slate-700">Company: <span className="font-bold text-slate-900">{selectedCompany?.name}</span></p>
+                        <p className="text-sm text-slate-700">Plan: <span className="font-bold text-slate-900">{selectedPlan?.name}</span></p>
+                        <p className="text-sm text-slate-700">Device Allocation: <span className="font-bold text-slate-900">{selectedAllocationSummary || 'No device allocation found'}</span></p>
+                        <p className="text-sm text-slate-700">Total Seats: <span className="font-bold text-slate-900">{selectedSeatCount}</span></p>
                       </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Seats</label>
-                        <input
-                          name="seats"
-                          type="number"
-                          min="1"
-                          required
-                          defaultValue={1}
-                          className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 outline-none"
-                        />
-                      </div>
-                    </div>
+                    )}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-500 uppercase">Notes</label>
                       <textarea
@@ -2562,6 +2968,9 @@ export default function App() {
                       {isProcessing ? 'Creating...' : 'Create Offline License'}
                     </button>
                   </form>
+                      </>
+                    );
+                  })()}
                 </div>
               </motion.div>
             </div>
@@ -3069,7 +3478,7 @@ export default function App() {
                     
                     <div className="grid gap-4">
                       {subscriptions.filter(s => s.companyId === showActivePlan.id).map(sub => {
-                        const plan = plans.find(p => p.id === sub.planId);
+                        const plan = getPlanById(sub.planId);
                         return (
                           <div key={sub.id} className="p-4 border border-slate-100 rounded-2xl bg-slate-50/50 flex items-center justify-between">
                             <div className="flex items-center gap-4">
@@ -3244,7 +3653,7 @@ export default function App() {
         {/* Footer */}
         <footer className="mt-auto p-8 border-t border-slate-200 text-center">
           <p className="text-xs text-slate-400">
-            &copy; 2025 License Manager Server v2.4.0. All rights reserved. 
+            &copy; 2026 License Manager Server v2.0.0. All rights reserved. 
             <span className="mx-2">|</span>
             <a href="#" className="hover:text-emerald-500 transition-colors">Documentation</a>
             <span className="mx-2">|</span>

@@ -1,4 +1,5 @@
 import { OfflineActivationRequest, OfflineFingerprint, OfflineLicenseRecord } from '../types';
+import { ActivationStatusEnum, LicenseStatusEnum } from '../licensingLifecycle';
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -10,6 +11,8 @@ export const approveOfflineLicense = async (license: OfflineLicenseRecord): Prom
   return {
     ...license,
     status: 'Approved',
+    workflowStatus: LicenseStatusEnum.GENERATED,
+    activationStatus: ActivationStatusEnum.NOT_BOUND,
     approvedAt: new Date().toISOString().split('T')[0],
     notes: 'Subscription approval confirmed. Ready to issue generic offline license.',
   };
@@ -21,6 +24,8 @@ export const issueGenericOfflineLicense = async (license: OfflineLicenseRecord):
   return {
     ...license,
     status: 'Awaiting Fingerprint',
+    workflowStatus: LicenseStatusEnum.ISSUED,
+    activationStatus: ActivationStatusEnum.NOT_BOUND,
     genericLicenseFileName: `${fileStub}_generic.lic`,
     issuedAt: new Date().toISOString().split('T')[0],
     notes: 'Generic .lic file generated. Waiting for offline machine fingerprint request.',
@@ -41,6 +46,8 @@ export const uploadOfflineFingerprintRequest = async (
     license: {
       ...license,
       status: 'Fingerprint Uploaded',
+      workflowStatus: LicenseStatusEnum.ACTIVATION_PENDING,
+      activationStatus: ActivationStatusEnum.REQUEST_RECEIVED,
       fingerprintHash,
       requestFileName,
       notes: 'Fingerprint request uploaded. License can now be bound and activated.',
@@ -53,6 +60,7 @@ export const uploadOfflineFingerprintRequest = async (
       fingerprint,
       uploadedAt: new Date().toISOString().split('T')[0],
       status: 'Uploaded',
+      activationStatus: ActivationStatusEnum.REQUEST_RECEIVED,
     },
   };
 };
@@ -68,6 +76,8 @@ export const bindAndActivateOfflineLicense = async (
     license: {
       ...license,
       status: 'Activated',
+      workflowStatus: LicenseStatusEnum.ACTIVE,
+      activationStatus: ActivationStatusEnum.ACTIVATED,
       finalLicenseFileName: finalFileName,
       activatedAt: new Date().toISOString().split('T')[0],
       notes: 'Final activated .lic generated and ready for manual transfer.',
@@ -75,6 +85,7 @@ export const bindAndActivateOfflineLicense = async (
     request: {
       ...request,
       status: 'Processed',
+      activationStatus: ActivationStatusEnum.ACTIVATED,
     },
   };
 };

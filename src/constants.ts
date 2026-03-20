@@ -1,5 +1,10 @@
 
 import { SubscriptionPlan, Subscription, Company, License, User, ActivityLog, ConfigSettings, DeviceType, OfflineLicenseRecord, OfflineActivationRequest } from './types';
+import {
+  ActivationStatusEnum,
+  LicenseStatusEnum,
+  SubscriptionStatusEnum,
+} from './licensingLifecycle';
 
 export const MOCK_DEVICE_TYPES: DeviceType[] = [
   { id: 'dt-1', name: 'Windows', status: 'Active' },
@@ -130,6 +135,17 @@ export const MOCK_COMPANIES: Company[] = [
     linkedSubscriptions: ['sub-3'],
     linkedLicenses: ['lic-3'],
   },
+  {
+    id: 'comp-4',
+    name: 'Northwind Display Network',
+    email: 'ops@northwinddisplay.com',
+    industry: 'Retail',
+    contactPerson: 'Riya Sharma',
+    primaryMobile: '+1 555-0404',
+    status: 'Active',
+    linkedSubscriptions: ['sub-4'],
+    linkedLicenses: [],
+  },
 ];
 
 export const MOCK_SUBSCRIPTIONS: Subscription[] = [
@@ -138,13 +154,13 @@ export const MOCK_SUBSCRIPTIONS: Subscription[] = [
     planId: 'plan-1',
     companyId: 'comp-1',
     status: 'Active',
-    startDate: '2025-01-01',
-    endDate: '2026-01-01',
+    workflowStatus: SubscriptionStatusEnum.ACTIVE,
+    startDate: '2026-03-01',
+    endDate: '2026-03-11',
     requestedAt: '2024-12-25',
     approvedAt: '2024-12-28',
     allocations: [
-      { deviceTypeId: 'dt-1', count: 100 },
-      { deviceTypeId: 'dt-2', count: 75 },
+      { deviceTypeId: 'dt-1', count: 10 },
     ],
   },
   {
@@ -152,6 +168,7 @@ export const MOCK_SUBSCRIPTIONS: Subscription[] = [
     planId: 'plan-2',
     companyId: 'comp-2',
     status: 'Pending',
+    workflowStatus: SubscriptionStatusEnum.PENDING_APPROVAL,
     startDate: '2025-03-15',
     endDate: '2025-04-15',
     requestedAt: '2025-03-10',
@@ -164,6 +181,7 @@ export const MOCK_SUBSCRIPTIONS: Subscription[] = [
     planId: 'plan-3',
     companyId: 'comp-3',
     status: 'Expired',
+    workflowStatus: SubscriptionStatusEnum.EXPIRED,
     startDate: '2024-06-01',
     endDate: '2024-12-01',
     requestedAt: '2024-05-20',
@@ -171,6 +189,21 @@ export const MOCK_SUBSCRIPTIONS: Subscription[] = [
     allocations: [
       { deviceTypeId: 'dt-1', count: 50 },
       { deviceTypeId: 'dt-2', count: 50 },
+    ],
+  },
+  {
+    id: 'sub-4',
+    planId: 'plan-2',
+    companyId: 'comp-4',
+    status: 'Active',
+    workflowStatus: SubscriptionStatusEnum.ACTIVE,
+    startDate: '2026-03-20',
+    endDate: '2026-04-19',
+    requestedAt: '2026-03-18',
+    approvedAt: '2026-03-19',
+    allocations: [
+      { deviceTypeId: 'dt-1', count: 40 },
+      { deviceTypeId: 'dt-2', count: 10 },
     ],
   },
 ];
@@ -183,6 +216,8 @@ export const MOCK_LICENSES: License[] = [
     deviceTypeId: 'dt-1',
     key: 'LIC-7721-9902-8812-4451',
     status: 'Active',
+    workflowStatus: LicenseStatusEnum.ACTIVE,
+    activationStatus: ActivationStatusEnum.ACTIVATED,
     expiryDate: '2026-01-01',
     activationsCount: 45,
     maxActivations: 1,
@@ -194,6 +229,8 @@ export const MOCK_LICENSES: License[] = [
     deviceTypeId: 'dt-1',
     key: 'LIC-PENDING-0000',
     status: 'Revoked',
+    workflowStatus: LicenseStatusEnum.REVOKED,
+    activationStatus: ActivationStatusEnum.BLOCKED,
     expiryDate: '2025-04-15',
     activationsCount: 0,
     maxActivations: 1,
@@ -205,6 +242,8 @@ export const MOCK_LICENSES: License[] = [
     deviceTypeId: 'dt-1',
     key: 'LIC-1122-3344-5566-7788',
     status: 'Expired',
+    workflowStatus: LicenseStatusEnum.EXPIRED,
+    activationStatus: ActivationStatusEnum.ACTIVATED,
     expiryDate: '2024-12-01',
     activationsCount: 1,
     maxActivations: 1,
@@ -221,6 +260,8 @@ export const MOCK_OFFLINE_LICENSES: OfflineLicenseRecord[] = [
     deviceTypeId: 'dt-1',
     seats: 10,
     status: 'Awaiting Fingerprint',
+    workflowStatus: LicenseStatusEnum.ACTIVATION_PENDING,
+    activationStatus: ActivationStatusEnum.NOT_BOUND,
     genericLicenseFileName: 'TechCorp_M-0003_generic.lic',
     notes: 'Generic offline license has been emailed to customer.',
     createdAt: '2026-03-12',
@@ -236,6 +277,8 @@ export const MOCK_OFFLINE_LICENSES: OfflineLicenseRecord[] = [
     deviceTypeId: 'dt-1',
     seats: 5,
     status: 'Fingerprint Uploaded',
+    workflowStatus: LicenseStatusEnum.ACTIVATION_PENDING,
+    activationStatus: ActivationStatusEnum.REQUEST_RECEIVED,
     genericLicenseFileName: 'GlobalFinance_M-0002_generic.lic',
     requestFileName: 'GlobalFinance_branch-01.req',
     fingerprintHash: 'FP-9A21F8D0B144',
@@ -253,6 +296,8 @@ export const MOCK_OFFLINE_LICENSES: OfflineLicenseRecord[] = [
     deviceTypeId: 'dt-2',
     seats: 25,
     status: 'Activated',
+    workflowStatus: LicenseStatusEnum.ACTIVE,
+    activationStatus: ActivationStatusEnum.ACTIVATED,
     genericLicenseFileName: 'TechCorp_M-0004_generic.lic',
     finalLicenseFileName: 'TechCorp_signage-linux_final.lic',
     requestFileName: 'TechCorp_signage-linux.req',
@@ -280,6 +325,7 @@ export const MOCK_OFFLINE_REQUESTS: OfflineActivationRequest[] = [
     },
     uploadedAt: '2026-03-14',
     status: 'Uploaded',
+    activationStatus: ActivationStatusEnum.REQUEST_RECEIVED,
   },
   {
     id: 'off-req-2',
@@ -295,6 +341,7 @@ export const MOCK_OFFLINE_REQUESTS: OfflineActivationRequest[] = [
     },
     uploadedAt: '2026-03-08',
     status: 'Processed',
+    activationStatus: ActivationStatusEnum.ACTIVATED,
   },
 ];
 

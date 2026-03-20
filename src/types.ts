@@ -1,4 +1,10 @@
 
+import {
+  ActivationStatus,
+  LicenseLifecycleStatus,
+  SubscriptionLifecycleStatus,
+} from './licensingLifecycle';
+
 export type SubscriptionStatus = 'Active' | 'Expired' | 'Pending' | 'Rejected';
 export type LicenseStatus = 'Active' | 'Revoked' | 'Expired';
 export type UserRole = 'Super Admin' | 'License Admin' | 'Company Admin' | 'Viewer';
@@ -49,6 +55,7 @@ export interface Subscription {
   planId: string;
   companyId: string;
   status: SubscriptionStatus;
+  workflowStatus?: SubscriptionLifecycleStatus;
   statusDescription?: string;
   startDate: string;
   endDate: string;
@@ -79,6 +86,8 @@ export interface License {
   deviceTypeId: string;
   key: string;
   status: LicenseStatus;
+  workflowStatus?: LicenseLifecycleStatus;
+  activationStatus?: ActivationStatus;
   statusDescription?: string;
   expiryDate: string;
   activationsCount: number;
@@ -102,6 +111,8 @@ export interface OfflineLicenseRecord {
   deviceTypeId: string;
   seats: number;
   status: OfflineLicenseStatus;
+  workflowStatus?: LicenseLifecycleStatus;
+  activationStatus?: ActivationStatus;
   genericLicenseFileName?: string;
   finalLicenseFileName?: string;
   requestFileName?: string;
@@ -121,6 +132,7 @@ export interface OfflineActivationRequest {
   fingerprint: OfflineFingerprint;
   uploadedAt: string;
   status: OfflineRequestStatus;
+  activationStatus?: ActivationStatus;
 }
 
 export interface User {
